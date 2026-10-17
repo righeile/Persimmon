@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Persimmon by RíEile</title>
+<link rel="stylesheet" href="/static/labkit.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand" title="Persimmon — finds the most parsimonious perspective">Pers<span>immon</span><small class="brand-by">by RíEile</small></div>
+  <span class="divider"></span>
+  <button class="small" id="btnOpen">Open&hellip;</button>
+  <select class="small" id="samples" title="The pictures in this project's testdata folder">
+    <option value="">test pictures&hellip;</option>
+  </select>
+  <span class="dim" id="meta">no picture open</span>
+  <span class="divider"></span>
+  <button class="small" id="btnCheck" title="Run every check against the marks as they stand">Check</button>
+  <button class="small" id="btnConsensus" title="The nearest consistent perspective, and how far each line must move to reach it">Consensus</button>
+  <span class="divider"></span>
+  <button class="small ghost" id="btnSave" title="Save the marks as a .json file">Save marks</button>
+  <button class="small ghost" id="btnPdf" title="Save the marks as a vector PDF, over the picture">Save PDF</button>
+  <button class="small ghost" id="btnLoad" title="Load marks saved earlier">Load marks</button>
+  <button class="small ghost hidden" id="btnBeside" title="This picture has a marks file saved next to it">Load the marks beside it</button>
+  <input type="file" id="fileLoad" accept=".json" class="hidden">
+  <span class="spacer"></span>
+  <span id="busy" class="spinner hidden"></span>
+  <span id="toast" class="status hidden"></span>
+  <span id="themeSlot"></span>
+</header>
+
+<main>
+<div class="cols">
+
+  <div class="side">
+    <div class="panel">
+      <div class="sec-title">Trim</div>
+      <div class="row wrap">
+        <button class="small ghost" id="btnFindSheet" title="Look for a sheet of paper with a border around it. It refuses unless all four sides are real edges, because an already-cropped artwork always has some bright patch with four corners.">Find sheet</button>
+        <button class="small ghost" id="btnTrimEdit" title="Place the four corners of the sheet by hand. They may lie outside the picture.">Place corners</button>
+        <button class="small hidden" id="btnTrimApply" title="Map the sheet back to the rectangle it must have been, undoing the keystone.">Apply</button>
+        <button class="small ghost hidden" id="btnTrimCancel">Cancel</button>
+        <button class="small ghost hidden" id="btnTrimClear" title="Work on the whole picture again.">Clear</button>
+      </div>
+      <div class="why" id="trimState"></div>
+      <div class="why" id="trimFound"></div>
+    </div>
+
+    <div class="panel">
+      <div class="sec-title">Real size</div>
+      <div class="row wrap">
+        <input id="sizeValue" class="small num" type="number" min="0" step="any"
+               placeholder="size" title="How big the picture on screen really is. Leave it empty to stay in pixels.">
+        <select id="sizeUnit" class="small" title="The unit that size is in.">
+          <option value="mm">mm</option>
+          <option value="cm">cm</option>
+          <option value="m">m</option>
+          <option value="in">in</option>
+          <option value="ft">ft</option>
+        </select>
+        <select id="sizeAlong" class="small" title="Which edge that size measures.">
+          <option value="width">wide</option>
+          <option value="height">tall</option>
+        </select>
+        <button class="small ghost" id="btnSizeClear" title="Back to pixels.">Clear</button>
+      </div>
+      <div class="why" id="sizeState"></div>
+    </div>
+
+    <div class="panel">
+      <div class="sec-title">Perspective</div>
+      <div class="row">
+        <select id="perspective" class="grow" title="The type of perspective the drawing is meant to be in. This is the claim being checked, not a hint to the solver: the moves reported are how far the drawing is from THIS perspective. Hover an option for what it asks of the drawing.">
+          <option value="three">3-point &mdash; camera free to tilt</option>
+          <option value="two">2-point &mdash; uprights parallel</option>
+          <option value="one">1-point &mdash; uprights and one horizontal parallel</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="sec-title">Camera</div>
+      <div class="row wrap">
+        <button class="small ghost" id="btnCamIn" title="Read a camera another program solved: a Blender .blend (run in the background, its scripts switched off), an fSpy .fspy, or a .json. Its three vanishing points and horizon are drawn on the picture, and the marks are priced against it in pixels of movement.">Camera in&hellip;</button>
+        <select class="small hidden" id="camPick" title="The file holds more than one camera."></select>
+        <button class="small ghost hidden" id="btnCamClear" title="Forget the camera.">Clear</button>
+      </div>
+      <div class="row wrap">
+        <button class="small ghost" id="btnCamOut" title="Write the camera the marked families agree on as a Blender script, with this picture as the background. Up is taken from the family flagged vertical; the lens is refused when the marks cannot measure it.">Camera out</button>
+        <select class="small" id="camYaw" title="Nothing in a picture says which wall is the front. Turns the world about the vertical, a quarter turn at a time, so X and Y land the way you want them in Blender.">
+          <option value="0">front as read</option>
+          <option value="1">turned 90&deg;</option>
+          <option value="2">turned 180&deg;</option>
+          <option value="3">turned 270&deg;</option>
+        </select>
+      </div>
+      <div class="why" id="camState"></div>
+    </div>
+
+    <div class="panel">
+      <div class="sec-title">Marks</div>
+      <div class="row">
+        <!-- filled from KINDS: the name here, what it is on hover -->
+        <select id="newKind" class="grow" title="What the next mark will hold. Hover an option for what it is."></select>
+        <button class="small" id="btnAdd">Add</button>
+      </div>
+      <div class="row">
+        <button class="small ghost" id="btnDetect" title="Find straight edges in the picture and group them into vanishing-point families. Nothing is adopted until you click it.">Detect edges</button>
+        <label class="dim" title="Segments shorter than this are ignored. Short segments cannot locate a distant vanishing point, so raising this is the cure when the offered families look wrong.">min length <input type="number" id="minLen" class="num" value="40" min="10" max="400" step="5"></label>
+      </div>
+      <div id="candHost"></div>
+      <div class="listing" id="layers"></div>
+      <div class="hint" id="drawHint">Open a picture, then add a layer and click on it.</div>
+    </div>
+
+    <div class="panel hidden" id="editor">
+      <div class="sec-title" id="editTitle">Layer</div>
+      <div class="row">
+        <input type="text" id="edName" class="grow" placeholder="name">
+        <button class="small danger" id="btnDelLayer" title="Delete this layer and its marks">Delete</button>
+      </div>
+      <div class="row">
+        <label for="edColor" title="The colour this layer is drawn in, on the page and in the PDF. Pick one that stands out against the paint under it.">colour</label>
+        <input type="color" id="edColor">
+      </div>
+      <div id="edFields"></div>
+      <div class="row">
+        <button class="small ghost" id="btnClearMarks">Clear marks</button>
+        <span class="dim grow" id="edCount"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stageWrap">
+    <canvas id="view"></canvas>
+    <div class="viewbar">
+      <span class="dim" id="cursor"></span>
+      <span class="spacer"></span>
+      <label class="chk"><input type="checkbox" id="showFits" checked> fits</label>
+      <input type="color" id="colHorizon" value="#00e676" title="Colour of the horizon line (a layer's own colour is set on the layer).">
+      <label class="chk"><input type="checkbox" id="showMoves"> corrections</label>
+      <input type="color" id="colMoves" value="#ff2d55" title="Colour of the correction lines. The reference camera's stay violet.">
+
+      <label class="chk"><input type="checkbox" id="showCand" checked> detected</label>
+      <button class="small ghost" id="btnFit">Fit</button>
+      <span class="dim" id="zoomLbl">100%</span>
+    </div>
+  </div>
+
+  <div class="side wide">
+    <div class="panel">
+      <div class="sec-title">Readouts</div>
+      <div class="hint" id="resultsHint">Nothing checked yet. Mark two line families and press Check.</div>
+      <div id="results"></div>
+    </div>
+  </div>
+
+</div>
+</main>
+
+<script src="/static/labkit.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
