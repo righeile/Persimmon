@@ -22,7 +22,7 @@
   //   line     drag a segment        poly  click a run of points
   //   pair     click two points      none  nothing to draw, it refers to others
   var KINDS = {
-    family:  { draw: 'line', label: 'line family',  blurb: 'Lines that run to one vanishing point. Two make a vanishing point; three or more also measure how well they agree.' },
+    family:  { draw: 'line', label: 'line family',  blurb: 'Lines that run to one vanishing point. Two make a vanishing point; three or more also measure how well they agree. Click along a line instead of dragging, three points or more, then Enter: that tests whether it is straight, and in 5-point it is how a line is marked.' },
     surface: { draw: 'line', label: 'surface',      blurb: 'A plane: either the two vanishing points that span it, or level with the ground, which gives it the horizon. An arc is read against its own surface -- never the horizon unless it lies flat.' },
     arc:     { draw: 'poly', label: 'arc',          blurb: 'A rim that should be circular. Mark round it; below 120 deg of turning its shape is not determined and the check refuses.' },
     ellipse: { draw: 'line', label: 'ellipse',      blurb: 'Circles lying flat on the ground, or in a surface you name. Drag once right across one, the long way, and the ellipse a real circle of that width would cast is drawn for you \u2014 on a horizontal plane the drag is levelled onto the horizon, because that is the one diameter whose image runs parallel to it. Drag again for another: they are all built on the one plane under the one camera, so a row of them agrees with the horizon by construction. To have one you drew MEASURED instead, switch to marking and click round its rim. Or choose "circle in a square" and click inside a cell between two lines of each of two families: the circle inscribed in that square is drawn, and the card beside it says how square the cell is.' },
@@ -183,6 +183,7 @@
       id: 'L' + (S.nextId++), kind: kind, name: k.label + ' ' + n,
       color: COLORS[(S.layers.length) % COLORS.length],
       lines: [], pts: [], far: [], pairs: [], crown: [], refs: {},
+      curves: [],              // a family's lines marked by a run of points
       cells: [], cellOut: [],  // an ellipse's circles in squares: where, and what came back
       through: [],             // per arch: one more point, ON the curve
       bezAdj: [],              // per arch, per handle: the hand's offset
@@ -327,7 +328,7 @@
   }
 
   function markCount(L) {
-    if (L.kind === 'family') return L.lines.length;
+    if (L.kind === 'family') return L.lines.length + L.curves.length;
     if (KINDS[L.kind].draw === 'pair' || KINDS[L.kind].draw === 'triple') return L.pairs.length;
     if (L.kind === 'arch') return L.pts.length + L.far.length;
     if (L.kind === 'surface') return L.lines.length;
@@ -502,6 +503,7 @@
         if (on) L.lines.forEach(function (s) {
           dot(g, [s[0], s[1]], 3.4); dot(g, [s[2], s[3]], 3.4);
         });
+        (L.curves || []).forEach(function (q) { drawRun(g, q, on, false); });
       }
       var run = rowPts(L);
       drawRun(g, run, on, L.kind === 'polygon' || L.kind === 'ellipse');
@@ -554,6 +556,7 @@
 
     if (showFits) drawHorizon(g, W);
     if (showFits && S.ref) drawReference(g, W);
+    if (showFits && S.consensus) drawCurvi(g);
     if (showMoves && S.consensus) drawMoves(g);
   }
 
@@ -599,6 +602,14 @@
   function strokeSeg(g, s) {
     var a = toScreen([s[0], s[1]]), b = toScreen([s[2], s[3]]);
     g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+  }
+  function strokePath(g, q) {
+    g.beginPath();
+    q.forEach(function (c, i) {
+      var t = toScreen(c);
+      if (i) g.lineTo(t[0], t[1]); else g.moveTo(t[0], t[1]);
+    });
+    g.stroke();
   }
   function strokeRing(g, q) {
     g.beginPath();
@@ -765,9 +776,40 @@
       g.strokeStyle = kv[1];
       Object.keys(per).forEach(function (id) {
         var d = per[id];
+        // a segment, or in 5-point the arc the line is moved onto
         (d.corrected || []).forEach(function (s, i) {
-          if ((d.move_px || [])[i] > floor) strokeSeg(g, s);
+          if ((d.move_px || [])[i] > floor) (Array.isArray(s[0]) ? strokePath : strokeSeg)(g, s);
         });
+      });
+    });
+    g.restore();
+  }
+
+  // A 5-point answer drawn the way the picture is built: the circle 90 deg
+  // out from the centre, the horizon's great circle, each family's two
+  // vanishing points, and the whole line each mark belongs to, through both.
+  // Not drawn when the marks did not settle the camera.
+  function drawCurvi(g) {
+    var c = S.consensus.conditioning || {};
+    if (c.mode !== 'five' || c.axes_refused || !c.horizon) return;
+    g.save();
+    var o = toScreen(c.principal_point);
+    g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1; g.setLineDash([2, 4]);
+    g.beginPath(); g.arc(o[0], o[1], c.rim_radius_px * S.view.k, 0, 6.2832); g.stroke();
+    g.strokeStyle = $('#colHorizon').value; g.lineWidth = 1.6; g.setLineDash([7, 5]);
+    strokePath(g, c.horizon);
+    Object.keys(c.per_family || {}).forEach(function (id) {
+      var L = layer(id), d = c.per_family[id];
+      if (!L || L.hidden) return;
+      g.strokeStyle = L.color; g.lineWidth = 1; g.globalAlpha = 0.55; g.setLineDash([3, 5]);
+      (d.guides || []).forEach(function (q) { strokePath(g, q); });
+      g.globalAlpha = 1; g.lineWidth = 2; g.setLineDash([]);
+      [d.vp, d.vp_back].forEach(function (v) {
+        if (!v) return;
+        var p = toScreen(v);
+        g.beginPath(); g.arc(p[0], p[1], 7, 0, 6.2832);
+        g.moveTo(p[0] - 11, p[1]); g.lineTo(p[0] + 11, p[1]);
+        g.moveTo(p[0], p[1] - 11); g.lineTo(p[0], p[1] + 11); g.stroke();
       });
     });
     g.restore();
@@ -894,10 +936,12 @@
         if (d < tol && (!best || d < best.d)) best = { d: d, layer: L, path: path, i: i };
       });
     });
-    L.pairs.forEach(function (p, i) {
-      p.forEach(function (q, j) {
-        var d = Math.hypot(q[0] - w[0], q[1] - w[1]);
-        if (d < tol && (!best || d < best.d)) best = { d: d, layer: L, path: 'pairs', i: i, j: j };
+    ['pairs', 'curves'].forEach(function (path) {
+      (L[path] || []).forEach(function (p, i) {
+        p.forEach(function (q, j) {
+          var d = Math.hypot(q[0] - w[0], q[1] - w[1]);
+          if (d < tol && (!best || d < best.d)) best = { d: d, layer: L, path: path, i: i, j: j };
+        });
       });
     });
     // the Bezier handles, last, so an anchor sitting under one still wins:
@@ -920,6 +964,18 @@
   function finishRun() {
     var L = selected();
     if (!L || !S.pending.length) { S.pending = []; return; }
+    // a family's run is one line marked by its points: two are a line as if
+    // dragged, and three or more test whether it is straight
+    if (L.kind === 'family') {
+      var run = S.pending.filter(function (p, i, a) {     // a double-click lands twice
+        return !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) * S.view.k > 3;
+      });
+      S.pending = [];
+      if (run.length === 2) addLine(L, run[0].concat(run[1]));
+      else if (run.length > 2) { L.curves.push(run); fitFamily(L); }
+      refreshLayers(); showEditor(); paint(); commit();
+      return;
+    }
     // `far` is the arch's far run and the row's one marked top: both are a
     // second thing to mark on one layer, and one toggle serves both
     var target = ((L.kind === 'arch' || L.kind === 'posts') && S.archFar) ? 'far' : 'pts';
@@ -956,6 +1012,13 @@
         hit.layer.markK.splice(hit.i, 1);
       }
       if (hit.path === 'pairs') hit.layer.pairs.splice(hit.i, 1);
+      else if (hit.path === 'curves') {
+        // the point, not the line: two points left are still a line
+        var cv = hit.layer.curves[hit.i];
+        cv.splice(hit.j, 1);
+        if (cv.length < 2) hit.layer.curves.splice(hit.i, 1);
+        fitFamily(hit.layer);
+      }
       else if (hit.path === 'lines') {
         hit.layer.lines.splice(hit.i, 1);
         if (hit.layer.kind === 'family') fitFamily(hit.layer);
@@ -1016,7 +1079,7 @@
     if (S.dragLine) { S.dragLine.x2 = w[0]; S.dragLine.y2 = w[1]; paint(); }
     else if (S.dragPt) {
       var d = S.dragPt;
-      if (d.path === 'pairs') d.layer.pairs[d.i][d.j] = w;
+      if (d.path === 'pairs' || d.path === 'curves') d.layer[d.path][d.i][d.j] = w;
       else if (d.path === 'lines') {
         d.layer.lines[d.i][2 * d.j] = w[0];
         d.layer.lines[d.i][2 * d.j + 1] = w[1];
@@ -1066,6 +1129,8 @@
         // the first line of a family is free: there is nothing to be square to
         if (L.kind === 'family' && L.snapSquare && L.lines.length) snapLine(L, q);
         else addLine(L, q);
+      } else if (L && L.kind === 'family') {
+        S.pending.push([d.x1, d.y1]);        // a click, not a drag: a run of points
       }
       refreshLayers(); paint();
     }
@@ -1074,6 +1139,7 @@
         if (S.dragPt.layer.kind === 'family') fitFamily(S.dragPt.layer);
         if (S.dragPt.layer.kind === 'ellipse') fitRing(S.dragPt.layer);
       }
+      if (S.dragPt.path === 'curves') fitFamily(S.dragPt.layer);
       if (S.dragPt.path === 'cells') fitCells(S.dragPt.layer);
       if (S.dragPt.layer.kind === 'arch' && S.dragPt.path !== 'bez') {
         var AL = S.dragPt.layer; S.dragPt = null; fitArch(AL);
@@ -1109,16 +1175,18 @@
   // 9 px hand mark of a 1556 px picture and judges a 6583 px one far too
   // harshly. The marks file carries the size, so it is passed in.
   function fitFamily(L, wh) {
-    if ((L.refs || {}).square_of) { squareFamily(L); return; }
-    if (L.lines.length < 2) {
+    // 5-point has no point for a family of straight lines to meet at: its
+    // two vanishing points come with its camera, out of Consensus
+    if (S.perspective !== 'five' && (L.refs || {}).square_of) { squareFamily(L); return; }
+    if (S.perspective === 'five' || !marked(L)) {
       L.vp = null; L.vpInfo = null; refreshLayers();
       if (S.sel === L.id) showEditor();         // else it still shows the old point
       return;
     }
     var size = wh || (S.image ? [S.image.w, S.image.h] : null);
-    var sent = JSON.stringify(L.lines);
+    var sent = JSON.stringify([L.lines, L.curves]);
     var hz = L.on_horizon && horizonVps(L);
-    post('/api/fit_vp', { lines: L.lines, image: size, tidied: L.tidied || null,
+    post('/api/fit_vp', { lines: L.lines, curves: L.curves, image: size, tidied: L.tidied || null,
                           horizon: hz ? [hz[0].vp, hz[1].vp] : null,
                           // no second horizontal family to draw one from, so
                           // the server takes the horizon off the camera
@@ -1126,7 +1194,7 @@
       .then(function (r) {
       // the lines moved on while this was in flight: its point belongs to
       // lines that are gone, and the answer for these is already on its way
-      if (JSON.stringify(L.lines) !== sent) return;
+      if (JSON.stringify([L.lines, L.curves]) !== sent) return;
       L.vpInfo = r;
       // 'check these' still carries a point: one line disagrees with the rest,
       // which is something to say about the fit, not a reason to throw it away.
@@ -1752,7 +1820,11 @@
          'lengths fits equally well and the range is printed.',
     one: 'The uprights and one horizontal family must both come out parallel, ' +
          'and the vanishing point is the centre of vision. There is no focal ' +
-         'length to measure: f enters no vanishing point here.'
+         'length to measure: f enters no vanishing point here.',
+    five: 'Curvilinear: every straight edge drawn as an arc, as 5-point is drawn ' +
+          'with a compass, and checked as the stereographic projection that is. ' +
+          'Mark each line by three points or more. Only Consensus answers here; ' +
+          'the other checks are built on straight lines.'
   };
 
   function setPerspective(mode) {
@@ -1767,6 +1839,8 @@
     if (was !== S.perspective) {
       S.layers.forEach(function (L) {
         if (L.kind === 'arch' && L.lines.length) fitArch(L);
+        // a family's own vanishing point is linear perspective's alone
+        if (L.kind === 'family' && (was === 'five' || S.perspective === 'five')) fitFamily(L);
       });
     }
     if (was !== S.perspective && S.consensus) {
@@ -1786,10 +1860,12 @@
   function buildDoc() {
     var doc = { image: S.image, trim: S.trim, perspective: S.perspective,
                 scale: S.scale, vps: {}, vp_ranges: {}, surfaces: {},
-                square_of: {}, vp_names: {}, family_lines: {}, features: {} };
+                square_of: {}, vp_names: {}, family_lines: {}, family_curves: {},
+                features: {} };
     families().forEach(function (L) {
       if (L.vp) doc.vps[L.id] = L.vp;
       doc.family_lines[L.id] = L.lines;
+      doc.family_curves[L.id] = L.curves;
       doc.vp_names[L.id] = L.name;
       // declared, so the camera leaves it out: a derived point came OUT of
       // the camera and cannot be evidence for it
@@ -1874,27 +1950,28 @@
   // A family needs two lines to say where its lines run. Two families give a
   // perspective; against a reference camera one is enough, because the camera
   // supplies the others.
+  function marked(L) { return L.lines.length + L.curves.length >= 2; }
+
   function consensusReady() {
-    return families().filter(function (L) { return L.lines.length >= 2; }).length
-           >= (S.ref ? 1 : 2);
+    return families().filter(marked).length >= (S.ref ? 1 : 2);
   }
 
   function runConsensus() {
-    var f = families().filter(function (L) { return L.lines.length >= 2; });
+    var f = families().filter(marked);
     if (!consensusReady()) {
       toast(S.ref ? 'one line family at least, to put against the camera'
                   : 'two line families at least', true);
       return;
     }
-    var fam = {};
-    f.forEach(function (L) { fam[L.id] = L.lines; });
+    var fam = {}, cur = {};
+    f.forEach(function (L) { fam[L.id] = L.lines; cur[L.id] = L.curves; });
     // The family flagged as the vertical one names the upright axis, which is
     // the axis two-point perspective singles out. Without it every candidate
     // is tried and the cheapest wins, which is slower and can pick wrong.
     var roles = {};
     f.forEach(function (L) { if (L.vertical) roles[L.id] = 'vertical'; });
     post('/api/consensus', {
-      families: fam, image_size: [S.image.w, S.image.h],
+      families: fam, curves: cur, image_size: [S.image.w, S.image.h],
       mode: S.perspective, roles: roles, scale: S.scale,
       reference: S.ref ? S.ref.camera : null
     }).then(function (r) {
@@ -1977,16 +2054,16 @@
   // The camera the marks agree on, as a Blender script with the picture
   // behind it. Same request as the readout, because it IS that readout.
   function cameraOut() {
-    var f = families().filter(function (L) { return L.lines.length >= 2; });
+    var f = families().filter(marked);
     if (!S.image) { toast('open a picture first', true); return; }
     if (f.length < 2) { toast('two line families at least: the camera is what they agree on', true); return; }
-    var fam = {}, roles = {}, names = {};
+    var fam = {}, cur = {}, roles = {}, names = {};
     f.forEach(function (L) {
-      fam[L.id] = L.lines; names[L.id] = L.name;
+      fam[L.id] = L.lines; cur[L.id] = L.curves; names[L.id] = L.name;
       if (L.vertical) roles[L.id] = 'vertical';
     });
     post('/api/camera_out', {
-      families: fam, image_size: [S.image.w, S.image.h], mode: S.perspective,
+      families: fam, curves: cur, image_size: [S.image.w, S.image.h], mode: S.perspective,
       roles: roles, names: names, picture: S.image.path, trim: S.trim,
       yaw: Number($('#camYaw').value) || 0
     }).then(function (r) {
@@ -2032,7 +2109,7 @@
       var ct = el('span', { className: 'ct' });
       var n = markCount(L);
       if (L.kind === 'family') {
-        ct.textContent = n + ' line' + (n === 1 ? '' : 's') + (L.vp ? '' : n >= 2 ? ' · no VP' : '');
+        ct.textContent = n + ' line' + (n === 1 ? '' : 's') + (L.vp || S.perspective === 'five' ? '' : n >= 2 ? ' · no VP' : '');
       } else if (L.kind === 'surface') {
         ct.textContent = surfaceQuad(L) ? 'drawn' : n ? 'no VPs yet' : 'not drawn';
       } else if (KINDS[L.kind].draw === 'none') {
@@ -2947,7 +3024,7 @@
         referenceNotes(card, c);
       } else if (c.focal_refused) {
         card.append(el('div', { className: 'why', textContent: 'focal length refused: ' + c.focal_refused }));
-      } else if (c.focal_px) {
+      } else if (c.focal_px && c.mode !== 'five') {
         var rg = c.focal_range_over_pp || c.focal_range_over_pp_x;
         // In the picture's own units f is the station point: how far the eye
         // belongs from the paper. Say the range in whatever unit the sentence
@@ -3170,6 +3247,9 @@
       L.pairs.forEach(function (pr) {
         pr.forEach(function (q) { fn(q, 0, 1, L, 'pairs', 0); });
       });
+      (L.curves || []).forEach(function (cv) {
+        cv.forEach(function (q) { fn(q, 0, 1, L, 'curves', 0); });
+      });
     });
   }
 
@@ -3332,7 +3412,8 @@
       horizon_color: $('#colHorizon').value,
       layers: S.layers.map(function (L) {
         var o = { kind: L.kind, name: L.name, color: L.color, hidden: !!L.hidden,
-                  lines: L.lines, pts: L.pts, far: L.far, pairs: L.pairs, vp: L.vp };
+                  lines: L.lines, curves: L.curves, pts: L.pts, far: L.far, pairs: L.pairs,
+                  vp: L.vp };
         if (L.kind === 'surface') o.quad = surfaceQuad(L);
         // both rings, as on screen: the export gets annotated in
         // Illustrator, and the lean is the thing to look at
@@ -3377,7 +3458,7 @@
     S.nextId = d.nextId || (S.layers.length + 1);
     S.sel = null; S.results = null; S.consensus = null; S.consensusBoth = null;
     S.layers.forEach(function (L) {
-      L.lines = L.lines || []; L.pts = L.pts || []; L.far = L.far || [];
+      L.lines = L.lines || []; L.curves = L.curves || []; L.pts = L.pts || []; L.far = L.far || [];
       L.pairs = L.pairs || []; L.refs = L.refs || {};
       // the roof slope is the arch layer with straight sides now, and it
       // kept the one reference it had
@@ -3508,7 +3589,7 @@
     };
     $('#btnClearMarks').onclick = function () {
       var L = selected(); if (!L) return;
-      L.lines = []; L.pts = []; L.far = []; L.pairs = []; L.vp = null; L.vpInfo = null;
+      L.lines = []; L.curves = []; L.pts = []; L.far = []; L.pairs = []; L.vp = null; L.vpInfo = null;
       L.markK = [];          // or the next contacts inherit cleared marks' zooms
       S.pending = [];
       refreshLayers(); showEditor(); paint(); commit();
@@ -3572,7 +3653,12 @@
         e.preventDefault();
         var L = selected(); if (!L) return;
         if (S.pending.length) S.pending.pop();
-        else if (L.kind === 'family') { L.lines.pop(); fitFamily(L); }
+        else if (L.kind === 'family') {
+          // the kind of mark the mode is marked in goes first
+          ((L.curves.length && (S.perspective === 'five' || !L.lines.length))
+            ? L.curves : L.lines).pop();
+          fitFamily(L);
+        }
         else if (L.pairs.length && (KINDS[L.kind].draw === 'pair' || KINDS[L.kind].draw === 'triple')) L.pairs.pop();
         else if (L.kind === 'arch' && S.archFar) L.far.pop();
         else L.pts.pop();

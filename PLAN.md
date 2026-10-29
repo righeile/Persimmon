@@ -3207,3 +3207,140 @@ and a 200 mm bar; in a magnified screenshot the line of sight and the bar
 measure about 180 and 100 px, the 1.8 to 1 that 359 to 200 should give;
 clearing the size takes the scale off again; the
 light theme draws in dark ink. **632 passed, 0 failed.**
+
+## 50. "what about curvilinear perspective?" — 5-point, read as the stereographic projection, and a guard for the straight modes — 2026-10-29
+
+*The request:* "what about curvilinear perspective?", then "go build". §47's
+questions went unanswered, so the defaults held: hand-drawn 5-point first, a
+line marked by a run of three or more clicks, a refusal in 1-, 2- and 3-point
+when such runs bend, and no camera out yet. 4- and 6-point were not asked for
+and are not built.
+
+**The model.** A 5-point drawing made with a compass draws every straight edge
+as an arc through two opposite points of the circle 90° out from the centre.
+That is exactly the stereographic projection: a ray (x, y, z) lands at
+c + 2f·(x, y)/(1 + z), and the circle 90° out has radius 2f. §47 found the
+stereographic model picked 40 of 40 at up to 3 px. The projection is
+conformal, so a mark's distance from its curve is its angle off the line's
+plane times 2f/(1 + z) px a radian, whichever way the curve runs.
+
+**The fit** (`core/curvi.py`). A run of marks is a set of rays on one plane
+through the eye; a family's planes all hold the family's direction; the
+directions are square to each other. The unknowns are the centre, log f, the
+turn, and one angle a line for its plane. Least squares from several starting
+f; a second start that lands elsewhere at the same cost is a rival, and the
+answer is refused. Standard errors come from the Jacobian. If the centre is
+refused, the fit runs again with it pinned at the picture's centre, which §47
+found better conditioned.
+
+**Refusals**, in order. Any one withholds both the camera (f, the circle, the
+field) and the directions:
+- a rival start as good;
+- f past 8 picture diagonals (the arcs are straight to within the marks, so
+  the picture is linear) or under 0.02;
+- fewer than 4 points to spare, below which the fit's own error bars mean
+  nothing;
+- f placed only to worse than ±10 %;
+- the turn placed only to worse than ±2°.
+
+With no point to spare at all (lines marked by their two ends) the verdict is
+undetermined. Otherwise it is already consistent when no line moves more than
+a hand mark, and rectifiable when one does.
+
+**Measured** on synthetic rooms with known truth: 1200 × 900, f 150, 220 or
+400 px, 10 seeds each, marks scattered by 3 px (a careful hand) or 6 px. A fit
+is wrong when f is more than 10 % off or a direction more than 5°.
+
+| families × lines × points | 3 px: quoted | wrong, flagged | wrong, not flagged | 6 px: quoted | wrong, flagged | wrong, not flagged |
+|---|---|---|---|---|---|---|
+| 3 × 2 × 3 | 27 | 1 | 0 | 7 | 4 | 0 |
+| 2 × 2 × 3 | 0 | 3 | 0 | 2 | 5 | 0 |
+| 2 × 3 × 3 | 29 | 0 | 0 | 16 | 1 | 1 |
+| 3 × 3 × 5 | 30 | 0 | 0 | 25 | 1 | 0 |
+| 2 × 2 × 5 | 23 | 2 | 0 | 7 | 5 | 1 |
+
+Of 300 fits, 166 were quoted and 2 were wrong without a flag, both at 6 px with
+two families. Those two were turned 5.9° and 5.2° off, against quoted errors of
+±1.8° and ±1.9°; their f was 2.7 % and 6.4 % off, within its bars. 112 right
+answers were withheld. That is the price of the rules on spare points and on
+the turn, which cut the unflagged wrong answers from 9 to 2. Turn limits of
+2.5° and 3° were compared, and 2° kept.
+
+The turn's quoted error is honest. On one scene (3 × 3 × 4 at 3 px), over 100
+draws of the scatter, the turn came out a median 0.72° off (p90 1.56°) against
+a median quoted ±0.74°, and inside its quoted error 54 % of the time.
+
+**The guard.** In 1-, 2- and 3-point, each run counts as its straight chord:
+the total-least-squares line, with the farthest mark from it as the bend. So a
+straight line clicked three times counts toward its vanishing point like a
+dragged one (`/api/fit_vp`, the family fit, the checks). If any run bends more
+than a hand mark, Consensus answers undetermined and names the lines
+(`curved_lines`, by family). Camera out refuses for the same reason. On the
+same synthetic 5-point rooms at 3 px, 60 of 60 pictures were caught with 3, 4
+or 5 clicks a line. Straight lines at 3 px were refused 0, 1 and 5 times in
+1000 at 3, 4 and 5 clicks, since the farthest of more marks strays further. The
+message says that a line meant straight is misdrawn by that much.
+
+**In 5-point,** Check answers undetermined for every check, since the checks
+are built on linear perspective's straight lines. Camera out refuses, because
+the camera it writes for Blender is a pinhole. A camera read in is a pinhole
+too, so it is not compared.
+
+**The page.** In a family layer a drag is a line, as before. Three or more
+clicks along a line, ended by Enter or a double-click, make a run; two clicks
+make a line. A double-click's repeated point is dropped. ⌘-click removes a
+point from a run, a run's points drag, and Backspace takes the last run back.
+In 5-point the overlay draws the circle 90° out, the horizon, each line's arc
+and its whole circle, and the vanishing points at both ends of each direction.
+The readout gives f, the circle's radius and centre, and the field through the
+centre. Saved marks, the PDF, Clear and undo carry runs.
+
+**The test picture,** `testdata/5point.png`, with its marks beside it: a room
+drawn in 5-point, centre (596, 452), f 250 px, turned by the rotation vector
+(0.10, −0.16, 0.02). Three families, 3, 3 and 4 runs of five points, scattered
+1.5 px. The fit: already consistent, f 249.5 ± 2.9 px, the centre 2.3 px off
+(± 9.2), the turn 0.31° off (± 1.21°), the worst line 3.72 px.
+
+The first version was wrong at the bottom left, as the user saw. The drawing
+ran on past the circle 90° out, to 123°, so lines behind the eye were drawn,
+and a floor line behind the eye ran down through the floor like an upright.
+Stopping at the circle left a second fault: a cross-wall grid plane passed
+through the eye. Everything in a plane through the eye lands on one circle, so
+the wall's nearest upright and the floor line beyond it drew as one smooth arc,
+which reads as an upright running on through the floor. That is true to the
+projection but wrong for a test picture. The grid now steps half a unit off the
+eye.
+
+Checks: `five_point`, 22 rows.
+- The projection and its inverse undo each other.
+- Exact marks give f within 0.1 %, the centre within 0.5 px and the directions
+  within 0.05°. At 3 px, f is within 3 % and the directions within 1.5°.
+- A line drawn 30 px off its arc is found and named.
+- Lines marked by their ends are refused, and two lines of three points a
+  family quote no camera.
+- The guard refuses a 5-point drawing checked as 3-point, names the lines, and
+  writes no camera. Checked as 5-point, the same drawing is consistent and
+  draws its arcs.
+- Straight 3-click lines are not refused, and count toward their vanishing
+  point.
+- The checks refuse in 5-point.
+
+Three deliberate breaks were each caught. Switching the guard off fails the
+3-point refusal row. Fitting with an equidistant lens fails the round trip, and
+the exact marks then get no camera at all. Lifting the refusals fails the
+sparse row.
+
+On the real page (`run_mac.command` on port 8831):
+- The test picture and its marks load. Consensus in 5-point is already
+  consistent at 249.5 px, and draws the circle, the horizon, the arcs and the
+  vanishing points.
+- Runs are clicked, double-clicked and taken back.
+- Check answers undetermined with the reason, and Camera out shows its
+  refusal.
+- Switched to 3-point, the guard's refusal shows.
+
+Not built: 4- and 6-point; fisheye photographs, whose lenses are mostly
+equidistant or equisolid rather than stereographic (the marks choose the model
+only partly, §47.4); and camera out for 5-point.
+
+**654 passed, 0 failed.**

@@ -14,6 +14,9 @@ It runs on your own machine: a small Python server and a page in your browser.
 
 - **Vanishing points and the horizon**, from families of lines, in 1-, 2- or
   3-point perspective.
+- **5-point perspective**, the curvilinear kind drawn with a compass. Lines
+  marked as runs of points give the nearest consistent 5-point picture, the
+  circle 90° out, and the move each line needs.
 - **Consensus**: the nearest consistent perspective, and the move each line
   needs to reach it.
 - **Checks against that perspective**: circles and ellipses (including the
@@ -81,8 +84,9 @@ camera from a `.blend` file.
 1. **Open** a picture, or pick one of the test pictures.
 2. If it is a photograph of a sheet, use **Find sheet** or **Place corners**,
    then **Apply**.
-3. Choose the perspective the picture claims: **3-point**, **2-point** or
-   **1-point**. This is the claim being checked, not a hint to the solver.
+3. Choose the perspective the picture claims: **3-point**, **2-point**,
+   **1-point** or **5-point**. This is the claim being checked, not a hint to
+   the solver.
 4. **Add** a layer, choose what it holds, and mark on the picture.
    **Detect edges** offers line families; nothing is used until you click it.
 5. **Check** runs every check against the marks. **Consensus** finds the
@@ -96,7 +100,7 @@ units as well as pixels.
 
 | layer | you mark | it gives |
 |---|---|---|
-| line family | drag each line | a vanishing point, and, with three or more lines, how well they agree |
+| line family | drag each line, or click along it (three points or more, then `Enter`); in 5-point, click | a vanishing point, and, with three or more lines, how well they agree |
 | surface | two vanishing points, or "level with the ground" | the plane that an arc, ellipse or arch is read in |
 | arc | click round the rim | circle or oval, once the rim turns through 120° |
 | ellipse | drag across a circle, click round a drawn one, or click inside a cell | the ellipse a real circle would cast, how far a drawn one is from it, or the circle in a square |
@@ -178,9 +182,14 @@ whenever the toolkit is synced, so edits made here do not last.
 
 ## Limits
 
-Persimmon models a pinhole camera, so it handles linear perspective only. It
-does not detect a fisheye or curvilinear picture, and can call one consistent
-when it is not. PLAN.md §47 measures what supporting fisheye would take.
+Besides linear perspective, Persimmon handles 5-point, read as the
+stereographic projection a compass draws. In 5-point only Consensus answers.
+The other checks and Camera out are built on straight lines, and say so. 4- and
+6-point, and photographs through a fisheye lens, are not handled.
+
+A curvilinear picture checked as 1-, 2- or 3-point is refused only when its
+lines are marked by three or more clicks. A line dragged as two points shows no
+bend, so such a picture can still be called consistent when it is not.
 
 `PLAN.md` holds the design rules, the verification behind every check, and the
 bugs found along the way.

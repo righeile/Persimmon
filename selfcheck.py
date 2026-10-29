@@ -3816,6 +3816,129 @@ bpy.ops.wm.save_as_mainfile(filepath=SAVE_AS)
     check("...and leaves up alone, px", pt["z"][:2], pr["z"][:2], 1e-3)
 
 
+def five_point():
+    """5-point perspective, checked as the stereographic projection it is.
+
+    Compass-drawn 5-point puts every straight edge on a circle through two
+    opposite points of the circle 90 deg out, which is what the stereographic
+    projection does exactly. So a scene is built in it, marked as runs of
+    points, and the camera has to come back; then the refusals that PLAN.md
+    sec 50 measured, and the guard that stops linear perspective calling such
+    a drawing consistent.
+    """
+    print("\n5-point  (the sphere's camera off runs of points; the curved-line guard)")
+    import app as A
+    from core import curvi as CV
+    from scipy.spatial.transform import Rotation
+
+    W, H, c0, f0 = 1200, 900, np.array([610.0, 440.0]), 220.0
+    R0 = Rotation.from_rotvec([0.15, -0.2, 0.05]).as_matrix()   # rows: the world's axes
+
+    def scene(nl=3, k=4, sd=0.0, seed=0, nfam=3, f=f0):
+        """{family: runs of k points along nl straight edges}, as drawn in 5-point."""
+        rng = np.random.default_rng(seed)
+        out = {}
+        for a in range(nfam):
+            runs = []
+            while len(runs) < nl:
+                X = rng.uniform(-3, 3, 3)
+                Q = X + np.linspace(-12, 12, 2000)[:, None] * R0[a]
+                D = Q / np.linalg.norm(Q, axis=1, keepdims=True)
+                p = CV.project(D, c0, f)
+                i = np.flatnonzero((D[:, 2] > 0) & (p[:, 0] > 0) & (p[:, 0] < W)
+                                   & (p[:, 1] > 0) & (p[:, 1] < H))
+                if len(i) < 20 or np.any(np.diff(i) > 1):
+                    continue
+                s = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(p[i], axis=0).T))])
+                if s[-1] < 0.15 * np.hypot(W, H):
+                    continue
+                j = np.interp(np.linspace(0.05, 0.95, k) * s[-1], s, np.arange(len(i)))
+                runs.append((p[i][np.round(j).astype(int)] + rng.normal(0, sd, (k, 2))).tolist())
+            out[f"F{a}"] = runs
+        return out
+
+    def turn(c):
+        A_ = np.asarray(c["axes_cam"])
+        return max(float(np.degrees(np.arccos(min(1.0, abs(A_[a] @ R0[a])))))
+                   for a in range(len(c["per_family"])))
+
+    D = np.random.default_rng(0).normal(size=(50, 3))
+    D /= np.linalg.norm(D, axis=1, keepdims=True)
+    D[:, 2] = np.abs(D[:, 2])
+    check("the projection and its inverse undo each other",
+          float(np.abs(CV.rays(CV.project(D, c0, f0), c0, f0) - D).max()), 0.0, 1e-9)
+
+    exact = CV.fit(scene(), image_size=(W, H))
+    ce = exact["conditioning"]
+    check("exact marks: the scale, %", 100 * abs(ce["focal_px"] / f0 - 1), 0.0, 0.1)
+    check("...the centre, px", float(np.hypot(*(np.asarray(ce["principal_point"]) - c0))),
+          0.0, 0.5)
+    check("...the three directions, deg", turn(ce), 0.0, 0.05)
+    check("...and nothing to move", exact["verdict"], pred=lambda v: v == "already consistent")
+    noisy = CV.fit(scene(sd=3.0, seed=1), image_size=(W, H))
+    cn = noisy["conditioning"]
+    check("marked by hand (3 px): the scale within 3 %",
+          100 * abs(cn["focal_px"] / f0 - 1), pred=lambda v: v < 3)
+    check("...the directions within 1.5 deg", turn(cn), pred=lambda v: v < 1.5)
+    check("...and still consistent", noisy["verdict"], pred=lambda v: v == "already consistent")
+
+    off = scene(sd=1.0, seed=1)
+    off["F1"][2] = (np.asarray(off["F1"][2]) + [0.0, 30.0]).tolist()
+    moved = CV.fit(off, image_size=(W, H))
+    pm = moved["conditioning"]["per_family"]["F1"]
+    check("a line drawn 30 px off its arc has to move", pm["worst_px"],
+          pred=lambda v: v > moved["conditioning"]["mark_accuracy_px"])
+    check("...and it is that line", pm["worst_line"], 2, 0)
+    check("...so the drawing is rectifiable", moved["verdict"],
+          pred=lambda v: v == "rectifiable")
+
+    ends = CV.fit({k: [[r[0], r[-1]] for r in v] for k, v in scene().items()},
+                  image_size=(W, H))
+    check("lines marked by their two ends show no bend: refused", ends["verdict"],
+          pred=lambda v: v == "undetermined")
+    sparse = CV.fit(scene(nl=2, k=3, sd=3.0, nfam=2, seed=4), image_size=(W, H))
+    check("two lines of three points a family: no camera quoted",
+          sparse["conditioning"].get("focal_px"), pred=lambda v: v is None)
+
+    curv = scene(sd=1.0, seed=2)
+    rng = np.random.default_rng(5)
+    lin = {}
+    for name, v in (("a", (2400.0, 420.0)), ("b", (-1800.0, 450.0))):
+        lin[name] = []
+        for _ in range(3):
+            p = rng.uniform([200, 150], [1000, 750])
+            lin[name].append([(p + t * (np.asarray(v) - p)).tolist() for t in (0.0, 0.1, 0.2)])
+    with A.app.test_client() as cl:
+        def post(url, **kw):
+            return cl.post(url, json=dict(families={}, image_size=[W, H], **kw))
+        three = post("/api/consensus", curves=curv, mode="three").get_json()["free"]
+        five = post("/api/consensus", curves=curv, mode="five").get_json()["free"]
+        out3 = post("/api/camera_out", curves=curv, mode="three")
+        out5 = post("/api/camera_out", curves=curv, mode="five")
+        straight = post("/api/consensus", curves=lin, mode="three").get_json()["free"]
+        vp = cl.post("/api/fit_vp", json={"lines": [], "curves": lin["a"],
+                                          "image": [W, H]}).get_json()
+        chk = cl.post("/api/check", json={"doc": {"perspective": "five", "features": {
+            "r": {"kind": "posts", "pts": [[0, 0], [10, 10], [20, 20]]}}}}).get_json()
+    check("a 5-point drawing checked as 3-point is refused, not called consistent",
+          three["verdict"], pred=lambda v: v == "undetermined")
+    check("...naming the lines that bend",
+          sum(map(len, three["conditioning"]["curved_lines"].values())), pred=lambda v: v >= 3)
+    check("...and no camera is written for it", out3.status_code, 422, 0)
+    check("checked as 5-point it is consistent", five["verdict"],
+          pred=lambda v: v == "already consistent")
+    check("...with each line's arc and its whole line to draw",
+          [len(five["conditioning"]["per_family"]["F0"][k]) for k in ("corrected", "guides")],
+          [3, 3], 0)
+    check("no 5-point camera is written yet", out5.status_code, 422, 0)
+    check("straight lines marked by three points are not refused",
+          "curved_lines" in straight["conditioning"], pred=lambda v: v is False)
+    check("...and each counts as a line toward its vanishing point",
+          vp["conditioning"]["n_lines"], 3, 0)
+    check("the straight-line checks refuse in 5-point", chk["results"]["r"]["verdict"],
+          pred=lambda v: v == "undetermined")
+
+
 def main():
     print(__doc__.splitlines()[0])
     conic_fits()
@@ -3858,6 +3981,7 @@ def main():
     scene_distance()
     stray_lines()
     camera_in_out()
+    five_point()
     fixture_4jpg()
     print(f"\n{len(OK)} passed, {len(FAIL)} failed")
     if FAIL:

@@ -53,6 +53,9 @@ def _family(ax, L, lw=LW_PT):
     c = L.get("color", "#000000")
     for s in L.get("lines") or []:
         ax.plot([s[0], s[2]], [s[1], s[3]], color=c, lw=lw, solid_capstyle="round")
+    for q in L.get("curves") or []:
+        q = np.asarray(q, float)
+        ax.plot(q[:, 0], q[:, 1], color=c, lw=lw, solid_capstyle="round")
     vp = L.get("vp")
     if not vp:
         return

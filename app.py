@@ -34,6 +34,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from core import camera_io as CIO
 from core import checks as C
 from core import consensus as K
+from core import curvi as CV
 # `K` is the camera matrix inside _run_one, which shadows the module there, so
 # the one place the scaled mark accuracy lives needs a name of its own. A flat
 # 9 px under-flags every scan bigger than the one it was measured on.
@@ -493,8 +494,14 @@ def fit_vp():
     b = _body()
     try:
         s = np.asarray(b.get("lines") or [], float).reshape(-1, 4)
-    except ValueError:
-        return _err("lines must be [[x1,y1,x2,y2], ...]")
+        # a line marked by a run of points is read as the straight line
+        # nearest it, after the ones marked by their ends
+        cv = [CV.chord(np.asarray(P, float).reshape(-1, 2))[0]
+              for P in b.get("curves") or [] if len(P) >= 2]
+    except (ValueError, TypeError):
+        return _err("lines must be [[x1,y1,x2,y2], ...] and curves [[[x,y], ...], ...]")
+    if cv:
+        s = np.vstack([s, cv])
     if len(s) < 2:
         return _err("two lines at least")
     L = np.hypot(s[:, 2] - s[:, 0], s[:, 3] - s[:, 1])
@@ -768,9 +775,14 @@ RIGHT_DEG = 5.0
 
 
 def _family_segs(doc):
-    """Every family's marked lines, from the document the page sent."""
-    return {k: [s for s in (v or []) if s and len(s) == 4]
-            for k, v in (doc.get("family_lines") or {}).items()}
+    """Every family's marked lines, from the document the page sent, a line
+    marked by a run of points as the straight line nearest it."""
+    out = {k: [s for s in (v or []) if s and len(s) == 4]
+           for k, v in (doc.get("family_lines") or {}).items()}
+    for k, v in (doc.get("family_curves") or {}).items():
+        out.setdefault(k, []).extend(CV.chord(np.asarray(P, float).reshape(-1, 2))[0].tolist()
+                                     for P in v or [] if len(P) >= 2)
+    return out
 
 
 @app.post("/api/square_snap")
@@ -1141,6 +1153,12 @@ def _alt_cameras(doc, K, vps, vert):
     return out
 
 
+# What every check built on straight lines says of a 5-point picture.
+FIVE_ONLY = ("checked as 5-point, which draws straight edges as arcs: this is "
+             "built on linear perspective's straight lines and is not answered "
+             "here. Consensus checks the 5-point picture itself")
+
+
 def _camera(doc):
     """The camera the document's vanishing points support, or a refusal.
 
@@ -1160,6 +1178,8 @@ def _camera(doc):
     if len(named) >= 2:
         horiz = named + [k for k in horiz if k not in named]
     mode = doc.get("perspective") or "three"
+    if mode == "five":
+        return C.undetermined(FIVE_ONLY), None
 
     # The declared perspective type decides what a camera can be asked for at
     # all. One-point has no focal length to find -- the single vanishing point
@@ -1952,7 +1972,8 @@ def check():
             Ks = []
     results = {}
     for fid, feat in (doc.get("features") or {}).items():
-        results[fid] = _run_one(doc, feat, K, Ks)
+        results[fid] = (C.undetermined(FIVE_ONLY) if doc.get("perspective") == "five"
+                        else _run_one(doc, feat, K, Ks))
         results[fid]["kind"] = feat.get("kind")
         results[fid]["name"] = feat.get("name") or fid
     im = doc.get("image") or {}
@@ -2096,7 +2117,8 @@ def overlay():
 
 
 def _families(b):
-    """The marked families of a request, checked: (families, size, mode, roles).
+    """The marked families of a request, checked: (families, curves, size,
+    mode, roles). `curves` are the lines marked by a run of points.
 
     Shared by the readout and by the camera it can be turned into, so the two
     cannot disagree about what was marked.
@@ -2104,17 +2126,54 @@ def _families(b):
     fam = b.get("families") or {}
     try:
         fam = {k: np.asarray(v, float).reshape(-1, 4) for k, v in fam.items()}
+        curves = {k: [P for P in (np.asarray(q, float).reshape(-1, 2) for q in v or [])
+                      if len(P) >= 2]
+                  for k, v in (b.get("curves") or {}).items()}
     except ValueError:
-        raise ValueError("each family must be [[x1,y1,x2,y2], ...]")
-    for k, v in fam.items():
+        raise ValueError("each family must be [[x1,y1,x2,y2], ...] and each curve [[x,y], ...]")
+    curves = {k: v for k, v in curves.items() if v}
+    for k, v in list(fam.items()) + [(k, P) for k, v in curves.items() for P in v]:
         if not np.isfinite(v).all():
             raise ValueError(f"family '{k}' has a non-finite coordinate")
     size = b.get("image_size")
     size = (float(size[0]), float(size[1])) if size else None
     mode = b.get("mode") or "three"
-    if mode not in K.MODES:
-        raise ValueError("mode must be one of " + ", ".join(K.MODES))
-    return fam, size, mode, b.get("roles") or None
+    if mode not in K.MODES + ("five",):
+        raise ValueError("mode must be one of " + ", ".join(K.MODES + ("five",)))
+    return fam, curves, size, mode, b.get("roles") or None
+
+
+def _chords(fam, curves, size):
+    """Lines marked by a run of points, as linear perspective reads them.
+
+    Each joins its family as the straight line nearest it, after the lines
+    marked by their ends. The ones that bend more than a hand mark come back
+    by family and line number, with the worst bend: no straight line is near
+    them, so no 1-, 2- or 3-point picture is either.
+    """
+    mark = _mark_accuracy(size)[0]
+    bent, worst = {}, 0.0
+    for k, runs in curves.items():
+        got = [CV.chord(P) for P in runs]
+        n = len(fam.get(k, ()))
+        fam[k] = np.vstack([fam.get(k, np.empty((0, 4)))] + [q for q, _ in got])
+        hit = [n + j + 1 for j, (_, d) in enumerate(got) if d > mark]
+        if hit:
+            bent[k] = hit
+            worst = max([worst] + [d for _, d in got])
+    return bent, worst, mark
+
+
+def _bent_why(bent, worst, mark):
+    n = sum(map(len, bent.values()))
+    one = n == 1
+    return (f"{n} line{'' if one else 's'} marked by a run of points "
+            f"bend{'s' if one else ''} by up to {worst:.0f} px, where a hand mark is "
+            f"worth {mark:.0f} px. Linear perspective draws every straight edge "
+            f"straight, so no 1-, 2- or 3-point picture is near {'it' if one else 'them'}. "
+            "If the picture is drawn in 5-point, check it as 5-point; if the "
+            f"line{' is' if one else 's are'} meant straight, "
+            f"{'it is' if one else 'they are'} misdrawn by that much")
 
 
 def _reference(b, size):
@@ -2145,10 +2204,27 @@ def consensus():
     """
     b = _body()
     try:
-        fam, size, mode, roles = _families(b)
+        fam, curves, size, mode, roles = _families(b)
         ref = _reference(b, size)
     except (ValueError, TypeError, IndexError) as exc:
         return _err(str(exc))
+    w, h = size or (1000.0, 1000.0)
+    if mode == "five":
+        # checked as the projection it is, off the runs of points themselves
+        # (core/curvi.py); a line marked by its two ends is a run of two
+        marks = {k: list(v.reshape(-1, 2, 2)) for k, v in fam.items()}
+        for k, runs in curves.items():
+            marks[k] = marks.get(k, []) + runs
+        if len(marks) < 2:
+            return _err("two line families at least")
+        out = {"free": CV.fit(marks, image_size=(w, h), roles=roles)}
+        if ref:
+            out["reference"] = C.undetermined(
+                "a camera read from a file is a pinhole, which draws every "
+                "straight edge straight; a 5-point picture is priced against "
+                "its own camera only")
+        return jsonify(_add_mm(out, _px_per_mm(b.get("scale"), w, h)))
+    bent, worst, mark = _chords(fam, curves, size)
     if len(fam) < (1 if ref else 2):
         return _err("two line families at least, or one against a reference camera")
 
@@ -2185,10 +2261,17 @@ def consensus():
             c["versus_marks"] = CIO.compare(ref, free["focal_px"],
                                             free["principal_point"], free["axes_cam"])
 
+    # A move to the nearest straight line says nothing of a mark that is not
+    # straight: drawn in 5-point, every reading here came out consistent.
+    if bent:
+        why = _bent_why(bent, worst, mark)
+        for res in out.values():
+            res.update(verdict="undetermined", why=why)
+            res.setdefault("conditioning", {})["curved_lines"] = bent
+
     # Attach the corrected line beside each drawn one, so the page can draw the
     # change instead of only naming it. These are the CLIPPED segments, which
     # are what the move was measured on.
-    w, h = size or (1000.0, 1000.0)
     for res in out.values():
         per = (res.get("conditioning") or {}).get("per_family") or {}
         for name, d in per.items():
@@ -2286,12 +2369,19 @@ def camera_out():
     """
     b = _body()
     try:
-        fam, size, mode, roles = _families(b)
+        fam, curves, size, mode, roles = _families(b)
         if size is None:
             raise ValueError("the picture's size is needed to write a camera")
         yaw = int(b.get("yaw") or 0) % 4
     except (ValueError, TypeError, IndexError) as exc:
         return _err(str(exc))
+    if mode == "five":
+        return _err("no camera to write: a 5-point picture is the stereographic "
+                    "projection, and the camera written for Blender is a pinhole. "
+                    "Writing a 5-point one out is not built yet", 422)
+    bent, worst, mark = _chords(fam, curves, size)
+    if bent:
+        return _err("no camera to write: " + _bent_why(bent, worst, mark), 422)
     res = K.fit(fam, image_size=size, mode=mode, roles=roles)
     c = res.get("conditioning") or {}
     # A fit with no marks to spare is "undetermined" as a CHECK but it is still
