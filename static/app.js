@@ -1321,9 +1321,17 @@
 
   function runDetect() {
     if (!S.image) { toast('open a picture first', true); return; }
+    // 0 is a setting here (merge nothing, join nothing), so only a blank
+    // field falls back to the default
+    function setting(q) {
+      var v = parseFloat($(q).value);
+      return isFinite(v) ? v : parseFloat($(q).defaultValue);
+    }
     post('/api/detect', {
       image: S.image.path, trim: S.trim,
-      min_len: parseFloat($('#minLen').value) || 40
+      min_len: parseFloat($('#minLen').value) || 40,
+      tol: setting('#detTol'), merge_deg: setting('#detMerge'),
+      floor: setting('#detFloor'), join_pct: setting('#detJoin')
     }).then(function (r) {
       if (r.error) { toast(r.error, true); return; }
       S.cand = null;
@@ -1346,8 +1354,9 @@
         families: r.families || []
       };
       $('#showCand').checked = true;
-      toast(r.segments.length + ' segments, ' + (r.families || []).length +
-            ' famil' + ((r.families || []).length === 1 ? 'y' : 'ies'));
+      var nf = (r.families || []).length;
+      toast(r.segments.length + ' segments, ' + nf + ' famil' + (nf === 1 ? 'y' : 'ies') +
+            (r.merged_from > nf ? ' (' + r.merged_from + ' before merging)' : ''));
       refreshLayers(); paint(); commit();
     });
   }
@@ -3623,6 +3632,14 @@
     $('#fileLoad').onchange = function (e) { if (e.target.files[0]) loadMarks(e.target.files[0]); };
     $('#btnFit').onclick = fitView;
     $('#btnDetect').onclick = runDetect;
+    // a preset fills the four fields; changing one by hand makes them the
+    // user's own
+    var DET = ['#detTol', '#detMerge', '#detFloor', '#detJoin'];
+    $('#detPreset').onchange = function () {
+      var v = this.value.split(',');
+      if (v.length === 4) DET.forEach(function (q, i) { $(q).value = v[i]; });
+    };
+    DET.forEach(function (q) { $(q).oninput = function () { $('#detPreset').value = ''; }; });
     $('#showCand').onchange = paint;
     $('#showFits').onchange = paint;
     $('#showMoves').onchange = paint;

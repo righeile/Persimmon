@@ -1,12 +1,18 @@
 """Linear-perspective check: lines -> vanishing points -> per-line residual."""
 import cv2, numpy as np
 
-def lines(img, min_len=40, clahe=True):
+def lines(img, min_len=40, clahe=True, join=0.015):
     """Straight segments, from a path or from pixels already in hand.
 
     It takes an array as well as a path because a trimmed picture exists only
     in memory -- the user's original file is never rewritten -- and detection
     has to run on what the user is looking at, not on the untrimmed file.
+
+    LSD breaks a drawn line wherever the stroke thins or the grain shows
+    through: on 4.jpg 81 % of the line it found lay in pieces under 40 px, and
+    the minimum length threw them away. The pieces of one straight line are
+    joined first, across gaps up to `join` picture diagonals (0 joins
+    nothing), and the minimum length applies to what they make.
     """
     g = cv2.imread(img, cv2.IMREAD_GRAYSCALE) if isinstance(img, (str, bytes)) \
         else (cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img)
@@ -14,9 +20,73 @@ def lines(img, min_len=40, clahe=True):
         g = cv2.createCLAHE(3.0, (8, 8)).apply(g)
     segs = cv2.createLineSegmentDetector().detect(g)[0]
     if segs is None: return np.zeros((0, 4)), g
-    s = segs.reshape(-1, 4)
-    L = np.hypot(s[:, 2] - s[:, 0], s[:, 3] - s[:, 1])
-    return s[L >= min_len], g
+    s = segs.reshape(-1, 4).astype(float)
+    diag = float(np.hypot(*g.shape[:2]))
+    # a piece under 0.6 % of the diagonal has no direction to join by
+    s = s[_len(s) >= 0.006 * diag]
+    if join > 0:
+        s = _join(s, gap=join * diag)
+    return s[_len(s) >= min_len], g
+
+
+def _len(s):
+    return np.hypot(s[:, 2] - s[:, 0], s[:, 3] - s[:, 1])
+
+
+def _pairs(s, deg):
+    """Every pair of segments within `deg` of each other in direction, once."""
+    th = np.degrees(np.arctan2(s[:, 3] - s[:, 1], s[:, 2] - s[:, 0])) % 180
+    o = np.argsort(th)
+    ext, oo = np.r_[th[o], th[o] + 180], np.r_[o, o]        # 179 deg is next to 0
+    hi = np.searchsorted(ext, th[o] + deg, "right")
+    I = np.repeat(o, hi - np.arange(len(o)) - 1)
+    J = np.concatenate([oo[k + 1:h] for k, h in enumerate(hi)]) if len(o) else np.zeros(0, int)
+    keep = I != J
+    return I[keep], J[keep]
+
+
+def _join(s, gap, off=1.0, overlap=2.0):
+    """Pieces of one straight line, joined into it.
+
+    Two pieces join when they run within 2 deg of each other, end to end with
+    less than `gap` between them, and one straight line passes within `off` px
+    of every end of every piece joined so far. It is every end, not the last
+    pair, or a gentle arc is walked round one short step at a time. Pieces
+    side by side do not join: the two edges of one stroke, 3-4 px apart, stay
+    two lines. Each joined line is fitted through its pieces' ends, weighted
+    by the pieces' length.
+    """
+    pts = [np.array([q[:2], q[2:]]) for q in s]
+    wts = [np.full(2, l) for l in _len(s)]
+    for _ in range(12):                      # a piece joins once a round: 2**12 pieces
+        if len(s) < 2: break
+        I, J = _pairs(s, 2.0)
+        L = _len(s)
+        u = (s[:, 2:] - s[:, :2]) / L[:, None]
+        nrm = np.c_[-u[:, 1], u[:, 0]]
+        p = s[I, :2]
+        d1, d2 = ((s[J, :2] - p) * nrm[I]).sum(1), ((s[J, 2:] - p) * nrm[I]).sum(1)
+        t1, t2 = ((s[J, :2] - p) * u[I]).sum(1), ((s[J, 2:] - p) * u[I]).sum(1)
+        g = np.maximum(np.minimum(t1, t2) - L[I], -np.maximum(t1, t2))   # < 0 overlaps
+        ok = (np.maximum(np.abs(d1), np.abs(d2)) < 3 * off + 1) & (g < gap) & (g > -overlap)
+        used = np.zeros(len(s), bool)
+        new = []
+        for k in np.flatnonzero(ok)[np.argsort(g[ok])]:      # nearest first
+            i, j = I[k], J[k]
+            if used[i] or used[j]: continue
+            P, w = np.r_[pts[i], pts[j]], np.r_[wts[i], wts[j]]
+            c = (P * w[:, None]).sum(0) / w.sum()
+            d = np.linalg.svd((P - c) * np.sqrt(w)[:, None], full_matrices=False)[2][0]
+            if np.abs((P - c) @ np.array([-d[1], d[0]])).max() > off: continue
+            t = (P - c) @ d
+            new.append((np.r_[c + t.min() * d, c + t.max() * d], P, w))
+            used[i] = used[j] = True
+        if not new: break
+        keep = np.flatnonzero(~used)
+        s = np.r_[s[keep], [q for q, _, _ in new]]
+        pts = [pts[i] for i in keep] + [P for _, P, _ in new]
+        wts = [wts[i] for i in keep] + [w for _, _, w in new]
+    return s
 
 def resid_deg(s, vp):
     """Angle between each segment and the ray from its midpoint to vp, degrees."""
@@ -201,30 +271,42 @@ def _homog(s):
     p2 = np.c_[s[:, 2:], np.ones(len(s))]
     return np.cross(p1, p2)
 
-def vps(s, n=3, tol=1.5, iters=3000, min_inl=12, seed=0):
-    """Sequential RANSAC. Returns [(vp, inlier_mask)]; leftovers stay unassigned."""
+def vps(s, size, n=3, tol=1.5, iters=3000, min_inl=4, floor=0.7, seed=0):
+    """Sequential RANSAC. Returns [(vp, inlier_mask)]; leftovers stay unassigned.
+
+    Lines are sampled and scored by their length, not one vote each, and the
+    search ends at a family holding less than `floor` picture diagonals of
+    line in all (`size` is the picture's (h, w)). Twelve lines at least, as it
+    was, never offered the ten 166-255 px pole edges of shadowtest.png, 1.2
+    diagonals of line. On 40 synthetic pictures the floor of 0.7 took the
+    families matching no vanishing point from 18 to 5 and lost one of 105
+    found. Each refit is weighted by length, as a marked family's is.
+    """
     rng = np.random.default_rng(seed)
+    L = _len(s)
+    floor *= float(np.hypot(*size))
     free = np.ones(len(s), bool)
     out = []
     for _ in range(n):
         idx = np.flatnonzero(free)
         if len(idx) < min_inl: break
         H = _homog(s[idx])
-        best = (0, None)
+        p = L[idx] / L[idx].sum()
+        best = (0.0, None)
         for _ in range(iters):
-            a, b = rng.choice(len(idx), 2, replace=False)
+            a, b = rng.choice(len(idx), 2, replace=False, p=p)
             v = np.cross(H[a], H[b])
             if np.linalg.norm(v) < 1e-12: continue
-            m = resid_deg(s[idx], v) < tol
-            if m.sum() > best[0]: best = (m.sum(), v)
-        if best[1] is None or best[0] < min_inl: break
+            sc = L[idx][resid_deg(s[idx], v) < tol].sum()
+            if sc > best[0]: best = (sc, v)
+        if best[1] is None: break
         v = best[1]
-        for _ in range(5):                      # refit: null-space of inlier lines
+        for _ in range(5):                      # refit through the inliers
             m = resid_deg(s[idx], v) < tol
             if m.sum() < 2: break
-            v = np.linalg.svd(H[m])[2][-1]
+            v = fit(s, idx[m])
         m = resid_deg(s[idx], v) < tol
-        if m.sum() < min_inl: break
+        if m.sum() < min_inl or L[idx][m].sum() < floor: break
         full = np.zeros(len(s), bool); full[idx[m]] = True
         free &= ~full
         out.append((v / (np.linalg.norm(v[:2]) or 1), full))
@@ -257,22 +339,38 @@ def inside(s, quad, frac=1.0):
     ok = lambda p: cv2.pointPolygonTest(q, (float(p[0]), float(p[1])), False) >= 0
     return np.array([ok(x[:2]) and ok(x[2:]) for x in s], bool) if len(s) else np.zeros(0, bool)
 
-def merge(s, fams, tol=1.5):
-    """Two families are one if their pooled lines still share a vanishing point.
-    RANSAC splits a wide family (the columns) in two; the pooled refit is the test."""
+def merge(s, fams, size, tol=1.5, apart=3.0):
+    """Two families are one if their pooled lines still share a vanishing point
+    and their own points lie within `apart` degrees of one direction from the
+    eye (0 merges nothing).
+
+    RANSAC splits a wide family (the columns) in two; the pooled refit is the
+    test, but not on its own: a big family keeps the pooled median low
+    whatever joins it. It pooled a family of 2.jpg whose lines sat 4.2 deg
+    from the pooled point, and on 4.jpg the folds of a curtain into the
+    verticals, which moved them 1 deg. Directions are read as a lens as long
+    as the picture's diagonal would see them (`size` is (h, w)); the halves
+    of one split family came 2.4-2.9 deg apart, the curtain 15.
+    """
     fams = list(fams)
+    d = float(np.hypot(*size))
+    Ki = np.linalg.inv([[d, 0, size[1] / 2], [0, d, size[0] / 2], [0, 0, 1]])
     changed = True
     while changed and len(fams) > 1:
         changed = False
         for i in range(len(fams)):
             for j in range(i + 1, len(fams)):
+                a, c = Ki @ fams[i][0], Ki @ fams[j][0]
+                if abs(a @ c) < np.cos(np.radians(apart)) * np.linalg.norm(a) * np.linalg.norm(c):
+                    continue
                 pool = fams[i][1] | fams[j][1]
-                v = np.linalg.svd(_homog(s[pool]))[2][-1]
+                v = fit(s, np.flatnonzero(pool))
                 if np.median(resid_deg(s[pool], v)) < tol:
                     fams[i] = (v / (np.linalg.norm(v[:2]) or 1), pool)
                     fams.pop(j); changed = True; break
             if changed: break
-    return sorted(fams, key=lambda f: -f[1].sum())
+    L = _len(s)
+    return sorted(fams, key=lambda f: -L[f[1]].sum())
 
 def _reach(seg, quad):
     """How far the segment could run, along its own direction, before leaving the sheet.

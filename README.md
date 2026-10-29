@@ -89,6 +89,8 @@ camera from a `.blend` file.
    the solver.
 4. **Add** a layer, choose what it holds, and mark on the picture.
    **Detect edges** offers line families; nothing is used until you click it.
+   When the families look wrong, pick the kind of picture under *detection
+   settings* (freehand, ruled or rendered, sparse), or set its four numbers.
 5. **Check** runs every check against the marks. **Consensus** finds the
    nearest consistent perspective.
 6. **Save marks** writes a `.json` file. When one sits next to a picture, the

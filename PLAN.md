@@ -3208,6 +3208,281 @@ measure about 180 and 100 px, the 1.8 to 1 that 359 to 200 should give;
 clearing the size takes the scale off again; the
 light theme draws in dark ink. **632 passed, 0 failed.**
 
+## 49. "can we improve automatic edge detection?" — joined pieces, families by length, merges that agree — 2026-10-29
+
+*The request:* "can we improve automatic edge detection?"
+
+Detection stays what §1 and §12 made it: candidates the user takes or ignores.
+The question was how many right ones it offers, and how close they land.
+
+**Two benchmarks.** Real pictures, with nine vanishing points known another
+way: shadowtest.png's uprights, across and into-the-picture families (from its
+marks; the picture is synthetic, §43) and its shadows' foot (1498.4, 335.1);
+the fSpy camera's X and Y for fspy_untitled.jpg (its Z disagrees with the
+drawn columns), read inside the sheet because the paper's edge runs along
+the horizon; 4.jpg's two walls from its marks and the vertical from §5. Error
+is the angle between the rays K⁻¹v; a point is found under 2°. And 40
+synthetic pictures, 120 vanishing points: boxes and long lines drawn as broken
+pencil or wash strokes of mixed ink and width, with ellipses, stray strokes,
+grain, blur and JPEG. There a family no vanishing point lies within 3° of is
+junk.
+
+**What was wrong.**
+
+- *LSD leaves crumbs.* On 4.jpg, of the line it finds in pieces of 10 px or
+  more, 81 % is in pieces under 40 px (44 645 px against 8 479 px in pieces of
+  40 or more), and the minimum length threw them away.
+- *Each segment was one vote, and a family needed twelve.* shadowtest's ten
+  pole edges, 166–255 px each, were never offered. Pairs were drawn uniformly
+  and refits were unweighted, unlike every marked family's fit.
+- *The merge was the big family's to decide.* The pooled median stays low
+  whatever joins a big family. On 2.jpg it pooled a family whose own lines sat
+  4.23° from the pooled point (on the fSpy picture 2.28°), and once the
+  families were found by length it pooled the curtain folds of 4.jpg into its
+  verticals, moving them 1°.
+
+**What changed** (`core/vp.py`; `/api/detect` passes the picture's size):
+
+- `lines` drops pieces under 0.6 % of the diagonal, which have no direction to
+  join by, then `_join`s the rest. Two pieces join when they run within 2° of
+  each other, end to end with under 1.5 % of the diagonal between them (2 px
+  of overlap at most), and one straight line passes within 1 px of every end
+  of every piece joined so far. Testing only the newest pair would walk round
+  a gentle arc. The minimum length applies afterwards.
+- `vps` draws and scores lines by length, refits by length (`fit`, as marked
+  families are), and stops at a family holding under 0.7 picture diagonals of
+  line, or under 4 lines.
+- `merge` pools two families only if the pooled median is under tol (as
+  before) **and** their two vanishing points lie within 2·tol, 3°, of one
+  direction, read as a lens as long as the picture's diagonal sees them.
+  Families come out sorted by total length.
+
+Synthetic, 40 pictures:
+
+| | found of 120 | error mean / median | families a picture | junk | segments a picture | family median length | warned short |
+|---|---|---|---|---|---|---|---|
+| before | 101 | 0.36° / 0.27° | 2.7 | 3 | 123 | 53 px | 37 |
+| after | **104** | **0.20° / 0.10°** | 2.9 | 5 | 154 | 82 px | 1 |
+
+The floor of line a family must hold, swept with everything else as shipped:
+0.5 diagonals finds 105 with 18 junk, 0.6 finds 104 with 9, **0.7 finds 104
+with 5**, 0.8 finds 101 with 2, 1.0 finds 100 with 2. At 0.5 the junk
+families have a median of 8 lines and 0.59 diagonals of line; the real ones
+have 40 lines and 2.76 diagonals. The synthetic set never splits a family at
+any of these floors, so `merge` has nothing to do there.
+
+Real pictures, degrees from the known point:
+
+| | before | after |
+|---|---|---|
+| shadowtest uprights | not offered | **0.40** |
+| shadowtest across | 0.70 | 0.39 |
+| shadowtest into the picture | 0.07 | 0.04 |
+| shadowtest shadows | not offered | not offered |
+| fSpy X | 0.95 | 0.85 |
+| fSpy Y | 1.92 | 1.57 |
+| 4.jpg right wall | 1.78 | 1.82 |
+| 4.jpg vertical | 0.17 | 0.40 |
+| 4.jpg left wall | not offered | not offered |
+
+That is six found before and seven after. The 4.jpg vertical is 0.23° worse,
+and the cause was not traced. Detection takes longer: 0.43 → 0.60 s a
+synthetic picture, 0.39 → 0.82 s on 4.jpg.
+
+**The merge, pair by pair.** Every pair of raw families with a pooled median
+under tol, on the seven test pictures, with the angle between their points:
+4.jpg's right wall and its table and frame edges, 2.37° (one family, pooled);
+3.jpg's split, 2.89° (pooled); 1.jpg's drawn verticals and the keystoned paper
+edges of the untrimmed photograph, 5.75° (kept apart; trimming removes the
+edges anyway); 4.jpg's verticals and the curtain folds, 15.3° (kept apart);
+2.jpg's swallow, 63.4° (kept apart). Residuals cannot tell the curtain from a
+true split: pooled, the curtain's own median is 2.23° and the table's 2.14°.
+Only the direction separates them, which is why a per-family median under
+2·tol was tried as the guard and dropped.
+
+**Tried and dropped: folding a stroke's two edges into one.** LSD returns both
+edges of a drawn stroke, 3.1–3.7 px apart (126 pairs on 1.jpg, 143 on 2.jpg,
+157 on the fSpy picture). Folding each pair into its centre line would have
+tidied the candidates, but with families assigned by the true point it doubled
+the error, median 0.10° → 0.22°. So every stroke is still offered as its two
+edges.
+
+A slip worth recording: the fSpy picture is read inside the sheet, and its
+vanishing points were first compared in the crop's coordinates against the
+whole picture's camera. Every variant read about 2.5° off there, and the
+fixture was nearly written off as weak. Shifted back, X is 0.85° and Y 1.57°.
+
+Not built: the left wall of 4.jpg and shadowtest's shadows are still not
+offered. The shadows hold 0.58 diagonals of line (10 lines of median 87 px),
+under the floor. A floor of 0.5 finds them at 1.70°, at the price of 18 junk
+families on the synthetic set instead of 5. The direction test assumes a
+normal lens, so on a very wide picture the halves of one family could read
+more than 3° apart and be offered twice.
+
+Checks: `detection`, 13 rows.
+- The join: a line in 12 pieces comes back whole, 595 px end to end. The two
+  edges of a stroke stay two, and a wider gap stays open. Round an 8000 px
+  radius the longest join is 245 px, against the 358 px that 1 px allows.
+- The merge: a curtain-like family 15° off is kept apart, though the pooled
+  median, 0.89°, would take it alone. A split 2.4° apart is pooled.
+- End to end through `/api/detect`: shadowtest's three families within 0.6°,
+  the uprights among them; 4.jpg's verticals within 0.6°, and its right wall
+  offered once, not as halves.
+
+Two deliberate breaks were each caught. Opening the direction gate to 20°
+fails the curtain rows (4.jpg's verticals go to 1.42°). Dropping the
+straightness test fails the arc row (545 px) and three end-to-end rows.
+
+On the real page (`run_mac.command` on a spare port):
+- 4.jpg: 256 segments, four families merged to three. The verticals are 68
+  lines aimed at (405, −49893), median 64 px and not warned (§12's 54 lines of
+  58 px were). The right wall is 62 lines at (3948, 907). The curtain folds
+  are 23 lines, warned. Taking the right wall puts 62 lines in a family layer,
+  fitted to (3948, 907), ok.
+- shadowtest.png: 142 segments, three families. The 10 uprights, median
+  184 px, are drawn along the posts' edges.
+
+**667 passed, 0 failed.**
+
+### 49.1 "can we manually adjust the merging and other parameters of automatic detection for different kinds of images" — 2026-10-29
+
+Four of §49's numbers are now on the page, under *detection settings* below
+Detect edges (closed until opened). Each starts at the measured default:
+
+- *spread*, 1.5°: how far a line may miss its family's vanishing point
+  (`tol`, in both `vps` and `merge`).
+- *merge within*, 3°: how close, as directions, two families' points must lie
+  to be offered as one (`apart`). 0 merges nothing.
+- *least line*, 0.7 × the diagonal: the line a family must hold to be offered
+  (`floor`).
+- *join gaps*, 1.5 % of the diagonal: the widest gap `_join` closes (`join`).
+  0 joins nothing.
+
+They reach `/api/detect` as `tol`, `merge_deg`, `floor` and `join_pct`. One
+left out is the default, and one that is not a number gets the usual 400. On
+the page a blank field sends the default but 0 is sent as 0, since for two of
+them 0 is a setting; *defaults* puts all four back. *merge within* no longer
+follows spread: §49 had it at 2·tol. The settings last as long as the page and
+are not saved with the marks. The toast now gives the count before merging
+when the merge took any.
+
+**What spread and join gaps do**, swept one at a time with the rest at the
+defaults, on §49's two benchmarks (found under 2°, junk with no point within
+3°):
+
+| | synthetic found of 120 | junk | error median | real found of 9 | 4.jpg right wall | 4.jpg verticals |
+|---|---|---|---|---|---|---|
+| spread 0.75° | **112** | 1 | 0.08° | 7 | **0.90°** | 0.67° |
+| spread 1.0° | 109 | **0** | 0.08° | 7 | 1.57° | 1.22° |
+| spread 1.5°, default | 104 | 5 | 0.10° | 7 | 1.82° | 0.40° |
+| spread 2.0° | 105 | 6 | 0.12° | 6 | 2.46° | 0.62° |
+| spread 3.0° | 98 | 11 | 0.14° | 7 | 1.83° | 1.18° |
+| join gaps 0 | 89 | 1 | 0.26° | 7 | 1.78° | **0.17°** |
+| join gaps 0.75 % | 102 | 2 | 0.12° | 6 | 2.96° | 0.55° |
+| join gaps 1.5 %, default | 104 | 5 | 0.10° | 7 | 1.82° | 0.40° |
+| join gaps 3 % | 109 | 3 | 0.10° | 7 | 1.99° | 0.89° |
+
+- The synthetic lines are drawn true, and there a tighter spread finds more
+  with less junk. On 4.jpg, the one hand drawing with known points, it is
+  mixed: 0.75° halves the right wall's error but moves the verticals from
+  0.40° to 0.67°. The default stays at 1.5° until more drawings with known
+  points say otherwise. The tooltip now says what was measured: lower it for a
+  ruled or rendered picture, raise it when a loose drawing's lines fall into
+  no family. The second half is the mechanism, not a measurement.
+- A wider join finds more broken strokes (3 % finds 109) and moves 4.jpg's
+  verticals. That traces §49's open question: with join gaps 0 and everything
+  else as shipped, the verticals are 0.17° off, as before §49.
+- *merge within* and *least line* were measured in §49. A split family's
+  halves come 2.4–2.9° apart and the curtain 15°; least line 0.5 offers the
+  shadows, with 18 junk families against 5.
+
+Checks: six rows added to `detection`, each through `/api/detect`.
+- merge within 0: 4.jpg's right wall comes back as its two halves.
+- least line 0.5: shadowtest's shadows are offered, 1.70° from the sun's foot
+  (not offered at 0.7).
+- join gaps 0: shadowtest gives LSD's own 230 segments, against 142 joined.
+- spread 0.5°: 4.jpg's verticals are found from 32 lines, against 68 at the
+  default.
+- A setting that is not a number is refused.
+
+Each setting dropped on its way to the detector fails its own row: merge
+within (1 family where 2 are expected), least line (20.0°), join gaps (142
+segments) and spread (68 lines).
+
+On the real page (`run_mac.command` on port 8832; 8831 was the other
+session's):
+- 4.jpg at the defaults: "256 segments, 3 families (4 before merging)". At
+  merge within 0: "256 segments, 4 families", the right wall offered as
+  43 lines at (4173, 951) and 19 at (4223, 786). Emptied, the field sends 3
+  and the three come back. *defaults* resets all four.
+- shadowtest.png: three families at the defaults; at least line 0.5 a fourth,
+  10 lines at (1556, 319), the shadows.
+
+A layout fault found on the way: labkit's `width: 100%` on number fields beats
+`.num`, so each setting's unit wrapped onto a line of its own. The settings box
+now sets its own widths. The min length and Real size fields have the same
+fault and were left as they were.
+
+**673 passed, 0 failed.**
+
+### 49.2 "go add presets" — 2026-10-30
+
+*detection settings* now opens on a *picture* choice that fills the four
+settings:
+
+| preset | spread | merge within | least line | join gaps |
+|---|---|---|---|---|
+| freehand | 1.5° | 3° | 0.7 | 1.5 % |
+| ruled or rendered | 0.75° | 2° | 0.7 | 3 % |
+| sparse | 1.5° | 3° | 0.5 | 1.5 % |
+
+Freehand is the defaults. A setting changed by hand turns the choice to *your
+own*, and choosing a preset again puts its values back, which retires the
+*defaults* button.
+
+Measured together, on §49's benchmarks:
+
+| | synthetic found of 120 | junk | error median | real found of 9 | 4.jpg right wall | 4.jpg verticals | shadows |
+|---|---|---|---|---|---|---|---|
+| freehand | 104 | 5 | 0.10° | 7 | 1.82° | **0.40°** | — |
+| spread 0.75°, join 1.5 % | 112 | 1 | 0.08° | 7 | 0.90° | 0.67° | — |
+| spread 0.75°, join 3 %, merge 3° | 114 | 0 | 0.09° | 7 | 0.76° | 1.58° | — |
+| **ruled or rendered** | **114** | **0** | 0.09° | 7 | **0.76°** | 0.85° | — |
+| **sparse** | 105 | 18 | 0.10° | **8** | 1.82° | 0.40° | **1.70°** |
+| least line 0.5, spread 1.0° | 110 | 12 | 0.08° | 8 | 1.57° | 1.22° | 1.78° |
+| least line 0.5, spread 0.75° | 113 | 7 | 0.08° | 7 | 0.90° | 0.70° | — |
+
+- *Ruled or rendered.* A tight spread and wide joins together find 114 of 120
+  with no junk, 57 of 60 for each stroke style, pencil and wash. The synthetic
+  set never splits a family, so *merge within* changes nothing there. On
+  4.jpg at 3° the verticals took in a family 2–3° off them and went to 1.58°;
+  at 2° they stay at 0.85°. On the rendered shadowtest its families are where
+  they were or closer (across 0.39° → 0.33°); on the fSpy picture X moves
+  0.85° → 0.98°. It is not for a painting: on 4.jpg it offers five families.
+- *Sparse.* Least line 0.5 alone keeps every default result and adds the
+  shadows, 8 of 9, at 18 junk families against 5. A tighter spread with it is
+  a trade: 12 junk at 1.0° but the verticals at 1.22°, 7 junk at 0.75° but the
+  shadows lost again. So it changes the one setting.
+- *Freehand* stays the defaults, where 4.jpg's verticals are best.
+
+Checks: three rows in `detection`, reading the presets from index.html itself.
+Freehand equals the fields' own defaults, which a blank field falls back to;
+ruled or rendered keeps shadowtest's families within 0.6° (worst 0.40°);
+sparse offers its shadows (1.70°). Each fails on its own break, fed through
+the page's text: freehand's spread at 1.0, sparse's least line back at 0.7
+(20.0°), ruled's least line at 3 (90°).
+
+On the real page (port 8832): the choice opens on freehand. Ruled or rendered
+fills 0.75, 2, 0.7 and 3, and Detect edges sends them. Typing a spread turns
+the choice to *your own*; freehand puts 1.5, 3, 0.7 and 1.5 back. Sparse on
+shadowtest offers four families, the fourth 10 lines at (1556, 319), the
+shadows.
+
+Not built: the choice saved with the marks, and a preset for photographs,
+which the benchmarks hold none of with known points.
+
+**676 passed, 0 failed.**
+
 ## 50. "what about curvilinear perspective?" — 5-point, read as the stereographic projection, and a guard for the straight modes — 2026-10-29
 
 *The request:* "what about curvilinear perspective?", then "go build". §47's

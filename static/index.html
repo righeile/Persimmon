@@ -112,6 +112,20 @@
         <button class="small ghost" id="btnDetect" title="Find straight edges in the picture and group them into vanishing-point families. Nothing is adopted until you click it.">Detect edges</button>
         <label class="dim" title="Segments shorter than this are ignored. Short segments cannot locate a distant vanishing point, so raising this is the cure when the offered families look wrong.">min length <input type="number" id="minLen" class="num" value="40" min="10" max="400" step="5"></label>
       </div>
+      <details id="detOpts">
+        <summary title="How Detect edges groups what it finds. Change these when the families offered look wrong for this kind of picture, then click Detect edges again.">detection settings</summary>
+        <div class="row wrap">
+          <label class="dim" title="Fills the settings below with values measured for that kind of picture. Changing one by hand makes them your own.">picture <select id="detPreset" class="small">
+            <option value="1.5,3,0.7,1.5" title="Drawn or painted by eye. The measured defaults.">freehand</option>
+            <option value="0.75,2,0.7,3" title="Straight edges drawn true, with a ruler or by a program. Finds more of their vanishing points, with fewer chance groupings.">ruled or rendered</option>
+            <option value="1.5,3,0.5,1.5" title="Some vanishing points are held by only a few lines, such as shadows. Offers those smaller families too, and more chance groupings with them.">sparse</option>
+            <option value="" disabled title="A setting has been changed by hand.">your own</option>
+          </select></label>
+          <label class="dim" title="How far a line may miss its family's vanishing point and still count. Lower it for a ruled or rendered picture; raise it when many lines of a loosely drawn one fall into no family.">spread <input type="number" id="detTol" class="num" value="1.5" min="0.2" max="10" step="0.1">&deg;</label>
+          <label class="dim" title="Families whose vanishing points lie within this angle of one direction are offered as one. 0 never merges; raise it when one family keeps coming back as two.">merge within <input type="number" id="detMerge" class="num" value="3" min="0" max="30" step="0.5">&deg;</label>
+          <label class="dim" title="How much line a family must hold to be offered, in picture diagonals. Lower it to see small families, such as a few shadows; raise it when chance groupings are offered.">least line <input type="number" id="detFloor" class="num" value="0.7" min="0" max="10" step="0.1">&times; diagonal</label>
+          <label class="dim" title="Pieces of one straight line are joined across gaps up to this, as a percentage of the picture's diagonal. 0 joins nothing; raise it for dashed or broken lines.">join gaps <input type="number" id="detJoin" class="num" value="1.5" min="0" max="10" step="0.5">%</label>        </div>
+      </details>
       <div id="candHost"></div>
       <div class="listing" id="layers"></div>
       <div class="hint" id="drawHint">Open a picture, then add a layer and click on it.</div>

@@ -1284,6 +1284,116 @@ def short_segment_guard():
           V.short_for_vp(20.0, None, w, h), pred=lambda v: v is False)
 
 
+def detection():
+    """Detect edges: LSD's pieces joined, families by length, merges that agree."""
+    print("\nedge detection")
+    import json
+    import re
+    import app as A
+    rng = np.random.default_rng(1)
+    a, b = np.array([100.0, 300.0]), np.array([700.0, 330.0])
+    u = (b - a) / np.linalg.norm(b - a)
+    n = np.array([-u[1], u[0]])
+    piece = lambda t0, t1, o=(0, 0): np.r_[a + t0 * u + o[0] * n, a + t1 * u + o[1] * n]
+    # one drawn line in 12 pieces of 45 px, each end up to 0.3 px off it,
+    # the way LSD leaves a pencil line
+    s = np.array([piece(t, t + 45, rng.uniform(-0.3, 0.3, 2)) for t in np.arange(0, 600, 50.0)])
+    j = V._join(s, 15)
+    check("a line LSD broke in 12 is joined whole", len(j), 1, 0)
+    check("  end to end, px", float(V._len(j).max()), 595.0, 1.0)
+    check("the two edges of a stroke, 3.5 px apart, stay two",
+          len(V._join(np.array([piece(0, 300), piece(300, 0, (3.5, 3.5))]), 15)), 2, 0)
+    check("a gap wider than allowed stays open",
+          len(V._join(np.array([piece(0, 200), piece(240, 440)]), 15)), 2, 0)
+    # 40 pieces round an 8000 px radius: each turns 0.36 deg from the last,
+    # well inside the 2 deg a join allows, and the arc is 62 px off straight.
+    # A line within 1 px of it runs 358 px at most; with no straightness test
+    # the joins ran to 545
+    r = 8000.0
+    P = lambda th: np.array([r * np.sin(th), r - r * np.cos(th)])
+    arc = np.array([np.r_[P(t), P(t + 45 / r)] for t in np.arange(40) * 50 / r])
+    check("an arc is not walked round into one line, px",
+          float(V._len(V._join(arc, 15)).max()), pred=lambda L: L < 358)
+
+    def toward(vp, k, x0, x1):
+        m = np.c_[rng.uniform(x0, x1, k), rng.uniform(100, 1200, k)]
+        d = np.asarray(vp, float) - m
+        d /= np.linalg.norm(d, axis=1, keepdims=True)
+        return np.c_[m - 40 * d, m + 40 * d]
+
+    def two(A, B):
+        s = np.r_[A, B]
+        m = np.arange(len(s)) < len(A)
+        return s, [(V.fit(s, np.flatnonzero(m)), m), (V.fit(s, np.flatnonzero(~m)), ~m)]
+    size = (1280, 884)                     # testdata/4.jpg, and its families
+    s, f = two(toward((405, -49893), 68, 50, 850), toward((-62, -4718), 23, 100, 400))
+    check("curtain folds 15 deg off the verticals: kept apart", len(V.merge(s, f, size)), 2, 0)
+    check("  the pooled median alone would have taken them",
+          float(np.median(V.resid_deg(s, V.fit(s)))), pred=lambda m: m < 1.5)
+    s, f = two(toward((4173, 951), 43, 50, 850), toward((4223, 786), 19, 50, 850))
+    check("one family RANSAC split, 2.4 deg apart: pooled", len(V.merge(s, f, size)), 1, 0)
+
+    def ray(K, v):
+        v = np.linalg.solve(K, v)
+        return v / np.linalg.norm(v)
+
+    def off(K, f, v):
+        """Degrees between an offered family and a vanishing point known otherwise."""
+        h = np.r_[f["vp"], 1.0] if f["vp"] is not None else np.r_[f["direction"], 0.0]
+        return float(np.degrees(np.arccos(min(1.0, abs(ray(K, h) @ ray(K, v))))))
+    with A.app.test_client() as cl:
+        def ask(name, **settings):
+            return cl.post("/api/detect", json={"image": "testdata/" + name, **settings})
+        fams = ask("shadowtest.png").get_json()["families"]
+        Ks = np.array([[1400, 0, 600], [0, 1400, 450], [0, 0, 1.0]])
+        marks = json.load(open(A.HERE / "testdata" / "shadowtest.marks.json"))
+        for L in marks["layers"]:
+            if L["kind"] == "family":
+                # the uprights, ten pole edges, were never offered before
+                check(f"shadowtest.png: {L['name']} offered, deg off",
+                      min(off(Ks, f, V.fit(np.array(L["lines"], float))) for f in fams),
+                      pred=lambda e: e < 0.6)
+        sun = np.array([1498.4, 335.1, 1.0])          # the scene's sun, at its foot
+        check("  its shadows, 0.58 diagonals of line, are not",
+              min(off(Ks, f, sun) for f in fams), pred=lambda e: e > 2)
+        fams = ask("4.jpg").get_json()["families"]
+        K4 = np.array([[1250, 0, 442], [0, 1250, 640], [0, 0, 1.0]])
+        right = np.array([3635, 858, 1.0])
+        check("4.jpg: verticals, the curtain kept out, deg off",
+              min(off(K4, f, np.array([287, -69267, 1.0])) for f in fams), pred=lambda e: e < 0.6)
+        check("4.jpg: the right wall offered once, not as halves",
+              sum(off(K4, f, right) < 5 for f in fams), 1, 0)
+        # the page's detection settings, each of which has to reach the detector
+        check("merge within 0 deg: the right wall comes back as its halves",
+              sum(off(K4, f, right) < 5 for f in ask("4.jpg", merge_deg=0).get_json()["families"]), 2, 0)
+        check("least line 0.5: shadowtest's shadows offered too, deg off",
+              min(off(Ks, f, sun) for f in ask("shadowtest.png", floor=0.5).get_json()["families"]),
+              pred=lambda e: e < 2)
+        fams = ask("4.jpg", tol=0.5).get_json()["families"]
+        check("spread 0.5 deg: 4.jpg's verticals from fewer lines, 68 at 1.5",
+              min(fams, key=lambda f: off(K4, f, np.array([287, -69267, 1.0])))["n"], pred=lambda n: n < 50)
+        check("join gaps 0: LSD's own 230 segments, as before joining",
+              len(ask("shadowtest.png", join_pct=0).get_json()["segments"]), 230, 0)
+        check("a setting that is not a number is refused",
+              ask("4.jpg", tol="wide").status_code, 400, 0)
+        # the page's presets, read from the page: the first is the defaults a
+        # blank field falls back to, and each does what its name says
+        page = (A.HERE / "static" / "index.html").read_text()
+        box = page.split('id="detPreset"')[1].split("</select>")[0]
+        presets = {name: dict(zip(("tol", "merge_deg", "floor", "join_pct"), map(float, v.split(","))))
+                   for v, name in re.findall(r'<option value="([\d.,]+)"[^>]*>([^<]+)<', box)}
+        check("preset freehand is the fields' own defaults", list(presets["freehand"].values()),
+              [float(re.search(f'id="{q}"[^>]*value="([\\d.]+)"', page)[1])
+               for q in ("detTol", "detMerge", "detFloor", "detJoin")], 0)
+        fams = ask("shadowtest.png", **presets["ruled or rendered"]).get_json()["families"]
+        check("preset ruled or rendered: shadowtest's families, worst deg off",
+              max(min(off(Ks, f, V.fit(np.array(L["lines"], float))) for f in fams)
+                  for L in marks["layers"] if L["kind"] == "family"), pred=lambda e: e < 0.6)
+        fams = ask("shadowtest.png", **presets["sparse"]).get_json()["families"]
+        check("preset sparse: shadowtest's shadows offered, deg off",
+              min(off(Ks, f, sun) for f in fams), pred=lambda e: e < 2)
+
+
 def fixture_4jpg():
     """The chandelier room, from the point sets kept in testdata/."""
     print("\ntestdata/4.jpg regression fixture")
@@ -3973,6 +4083,7 @@ def main():
     turning_and_threshold()
     conditioning_refuses()
     short_segment_guard()
+    detection()
     figure_module()
     trim_module()
     trim_on_photographs()

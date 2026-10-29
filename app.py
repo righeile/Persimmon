@@ -326,26 +326,36 @@ def detect():
     what comes back. Families are merged (`vp.merge`) before they are offered,
     because sequential RANSAC splits one wide family in two and offering eight
     where four are real wastes the user's attention on pairs 2-3 deg apart.
+
+    The page's detection settings arrive as `tol` (degrees a line may miss
+    its point), `merge_deg` (0 merges nothing), `floor` (picture diagonals
+    of line a family must hold) and `join_pct` (the widest gap joined, in
+    % of the diagonal; 0 joins nothing). Left out, each is the measured
+    default.
     """
     b = _body()
     try:
         p = _resolve(b.get("image", ""))
     except ValueError as exc:
         return _err(str(exc), 404)
-    min_len = float(b.get("min_len", 40))
+    try:
+        min_len, tol, merge_deg, floor, join_pct = (float(b.get(k, d)) for k, d in (
+            ("min_len", 40), ("tol", 1.5), ("merge_deg", 3.0), ("floor", 0.7), ("join_pct", 1.5)))
+    except (TypeError, ValueError):
+        return _err("min_len, tol, merge_deg, floor and join_pct are numbers")
     try:
         im, _ = _load(p, b.get("trim"))
     except (ValueError, json.JSONDecodeError) as exc:
         return _err(str(exc))
     # on the trimmed picture, or the desk and the drafting board get their own
     # vanishing-point families and they are the straightest lines in the frame
-    s, gray = V.lines(im, min_len=min_len)
+    s, gray = V.lines(im, min_len=min_len, join=join_pct / 100)
     ih, iw = gray.shape[:2]
     if not len(s):
         return jsonify({"segments": [], "families": [],
                         "note": "no line segments found at this minimum length"})
-    fams = V.vps(s, n=int(b.get("n", 6)), tol=float(b.get("tol", 1.5)))
-    merged = V.merge(s, fams, tol=float(b.get("tol", 1.5)))
+    fams = V.vps(s, (ih, iw), n=int(b.get("n", 6)), tol=tol, floor=floor)
+    merged = V.merge(s, fams, (ih, iw), tol=tol, apart=merge_deg)
     out = []
     for v, m in merged:
         pt = (v[:2] / v[2]).tolist() if abs(v[2]) > 1e-12 else None
