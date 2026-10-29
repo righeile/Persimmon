@@ -140,6 +140,13 @@ Each layer has its own colour, set in its editor. The horizon and the
 correction lines have colour wells under the picture. Recolour a line when you
 cannot see it against the paint; the PDF uses the same colours.
 
+Once there is a horizon, a small **top view** at the bottom right shows the
+drawing from above: the eye, the picture plane, and a ray from the eye to each
+vanishing point, with the field of view beneath. Where the camera is refused,
+the window says why; where the camera is only a guide, the plan is dimmed and
+says so. Given the picture's real size, the plan is drawn to scale, with a
+scale bar and the eye's distance in millimetres.
+
 | to | do |
 |---|---|
 | pan | drag with no layer selected, middle-drag, alt- or shift-drag, or scroll |
@@ -198,7 +205,7 @@ core/           the geometry, with no web code
   checks.py       every readout, with its conditioning
   rhythm.py       spacing, roofs, figures, ellipses
   figure.py       proportion and symmetry, projectively
-  rectify.py      a plane turned to face the viewer
+  rectify.py      a plane turned to face the viewer; the plan from above
   trim.py         a photograph trimmed to the artwork, keystone undone
   camera_io.py    cameras in from Blender, fSpy and JSON; out as a Blender script
   export.py       the vector PDF

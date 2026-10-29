@@ -3363,6 +3363,147 @@ def circle_in_a_square():
           ck["verdict"], pred=lambda v: v in ("circle", "oval"))
 
 
+def top_view():
+    """The drawing seen from above, read back off the vanishing points.
+
+    "if vanishing points and horizon are established, it should translate onto
+    a top view in a small window in the bottom right". The plan is the camera
+    seen from above, so each number in it is held against the world the camera
+    was built in: the angle each family makes with the line of sight, how far
+    back the eye stands, how much of the view the picture spans, where each
+    vanishing point sits on the picture plane. And it refuses where the camera
+    does, or draws a guide and says so where the camera is only a guide.
+    """
+    print("\nthe top view  (plan: directions to 1e-9 deg and distances to 1e-6 px "
+          "against the world; refused where the camera is)")
+    import app as A
+
+    W, H = 1400.0, 1000.0
+    up_w = np.array([0, -1.0, 0])                     # y runs down the page
+    dirs = {"A": 0.0, "B": np.pi / 2, "T": 0.6}       # a room, and a table askew
+
+    def world(K, Rot):
+        """The plan straight from the world: each family's angle off the line
+        of sight on the ground, toward the picture's right; the eye's distance
+        from the picture plane; and the angle the horizon's stretch across the
+        picture subtends."""
+        z = Rot.T @ np.array([0, 0, 1.0])
+        fwd = z - (z @ up_w) * up_w
+        cos_pitch = float(np.linalg.norm(fwd))
+        fwd /= cos_pitch
+        x = Rot.T @ np.array([1.0, 0, 0])
+        right = x - (x @ up_w) * up_w - (x @ fwd) * fwd
+        right /= np.linalg.norm(right)
+
+        def ang(d):
+            return float(np.degrees(np.arctan2(d @ right, d @ fwd)))
+        out = {}
+        for k, a in dirs.items():
+            d = np.array([np.sin(a), 0, np.cos(a)])
+            out[k] = ang(d * np.sign((Rot @ d)[2]))   # the end in front of the eye
+        l = vanish_line(K, Rot, up_w)
+        rays = [Rot.T @ np.linalg.solve(K, [x, -(l[0] * x + l[2]) / l[1], 1.0])
+                for x in (0.0, W)]
+        fov = abs(ang(rays[1]) - ang(rays[0]))
+        cv = vp_of(K, Rot, fwd)                       # the centre of vision
+        along = np.array([l[1], -l[0]]) * np.sign(l[1])  # the horizon, rightwards
+        return out, K[0, 0] / cos_pitch, fov, cv, along
+
+    scenes = {"level, centred": camera(1000.0, (W / 2, H / 2), 0.0, 0.35, 0.0),
+              "pitched, rolled, off-centre": camera(1250.0, (760.0, 455.0), -0.21, 0.52, 0.07)}
+    for label, (Kt, Rot) in scenes.items():
+        vps = {k: vp_of(Kt, Rot, [np.sin(a), 0, np.cos(a)]) for k, a in dirs.items()}
+        u = Kt @ Rot @ up_w
+        if abs(u[2]) > 1e-9:                          # a level camera's are parallel
+            vps["up"] = u[:2] / u[2]
+        # a slope climbing over the table's run: its vanishing point is off the
+        # horizon, and from above it runs where the run does
+        vps["S"] = vp_of(Kt, Rot, [np.sin(0.6), -0.5, np.cos(0.6)])
+        p = RC.plan(Kt, vps["A"], vps["B"], vps, (W, H))
+        want, dist, fov, cv, along = world(Kt, Rot)
+        print(f"  -- {label}")
+        check("each family's angle off the line of sight, deg worst",
+              max(abs(float(np.degrees(np.arctan2(*p["families"][k]["dir"]))) - want[k])
+                  for k in dirs), 0.0, 1e-9)
+        check("...with the picture's right on the plan's right",
+              [int(np.sign(p["families"][k]["dir"][0])) for k in dirs],
+              [int(np.sign(want[k])) for k in dirs], 0)
+        q = RC.plan(Kt, vps["B"], vps["A"], vps, (W, H))
+        check("...whichever way round the horizon's two points come",
+              max(float(np.abs(np.subtract(q["families"][k]["dir"], p["families"][k]["dir"])).max())
+                  for k in dirs), 0.0, 1e-12)
+        check("the eye stands f / cos(pitch) back from the picture plane, px",
+              p["distance_px"], dist, 1e-6)
+        check("the picture spans the angle its horizon subtends, deg", p["fov_deg"], fov, 1e-9)
+        al = along / np.linalg.norm(along)
+        check("each vanishing point sits on the picture plane as far along as on "
+              "the page's horizon, px worst",
+              max(abs(p["families"][k]["at"][0] - float((vps[k] - cv) @ al))
+                  + abs(p["families"][k]["at"][1] - dist) for k in dirs), 0.0, 1e-6)
+        fs = p["families"]
+        check("a slope, from above, runs where its own level run does, deg / px",
+              max(abs(float(np.degrees(np.arctan2(*fs["S"]["dir"]) - np.arctan2(*fs["T"]["dir"])))),
+                  float(np.abs(np.subtract(fs["S"]["at"], fs["T"]["at"])).max())), 0.0, 1e-6)
+        if "up" in vps:
+            check("the uprights are a point from above, not a direction",
+                  "up" in p["families"], pred=lambda v: v is False)
+    Kl, Rl = scenes["level, centred"]
+    p = RC.plan(Kl, vp_of(Kl, Rl, [0, 0, 1.0]), vp_of(Kl, Rl, [1.0, 0, 0.3]), {}, (W, H))
+    check("level and centred: the picture spans 2 atan(w / 2f), deg", p["fov_deg"],
+          float(np.degrees(2 * np.arctan(W / 2 / 1000.0))), 1e-9)
+
+    # --- the page's way in: the document it sends, and what comes back
+    Kt, Rot = scenes["pitched, rolled, off-centre"]
+    pv = {k: vp_of(Kt, Rot, [np.sin(a), 0, np.cos(a)]).tolist() for k, a in dirs.items()}
+    pv["up"] = vp_of(Kt, Rot, up_w).tolist()
+    doc = {"image": {"w": W, "h": H}, "width": W, "height": H, "perspective": "three",
+           "vertical_vp": "up", "horizon_vps": ["A", "B"], "vps": pv, "features": {}}
+    want, dist, fov, _, _ = world(Kt, Rot)
+    with A.app.test_client() as cl:
+        def ask(d):
+            return cl.post("/api/plan", json={"doc": d}).get_json()
+        r = ask(doc)
+        check("three vanishing points: a plan, measured", r["verdict"], "ok",
+              pred=lambda v: v == "ok")
+        check("...the eye as far back as in the world, px", r["value"]["distance_px"], dist, 1e-6)
+        check("...the field of view inside the range the focal slack allows",
+              r["conditioning"]["fov_deg_range"],
+              pred=lambda g: g[0] < r["value"]["fov_deg"] < g[1])
+        check("...and that slack said to be assumed: the marks gave none",
+              r["conditioning"]["focal_span_assumed"], True, pred=lambda v: v is True)
+        check("...in pixels only while the picture's real size is not given",
+              [k for k in r["value"] if k.endswith("_mm")], pred=lambda v: v == [])
+        cm35 = {"value": 35, "unit": "cm", "along": "width"}   # 1400 px: 4 px to the mm
+        rs = ask(dict(doc, scale=cm35))
+        check("given it, the eye's distance in mm too, mm", rs["value"].get("distance_mm"),
+              dist / 4, 1e-3)
+        check("...with its range, and the scale the plan is drawn to",
+              (rs["conditioning"].get("distance_range_mm"), rs["value"].get("mm_per_px")),
+              pred=lambda v: v[0] == [round(x / 4, 3) for x in rs["conditioning"]["distance_range_px"]]
+              and v[1] == 0.25)
+        r = ask(dict(doc, perspective="one"))
+        check("one-point: refused, no focal length to stand the eye at",
+              (r["verdict"], r["why"]), pred=lambda v: v[0] == "undetermined"
+              and "focal length" in v[1])
+        nov = {k: v for k, v in doc.items() if k != "vertical_vp"}
+        r = ask(nov)
+        check("three-point with no family ticked upright: refused, and says so",
+              (r["verdict"], r["why"]), pred=lambda v: v[0] == "undetermined"
+              and "vertical" in v[1])
+        lv = {k: vp_of(Kl, Rl, [np.sin(a), 0, np.cos(a)]).tolist() for k, a in dirs.items()}
+        two = dict(doc, perspective="two", vps=lv)
+        two.pop("vertical_vp")
+        r = ask(two)
+        check("two-point, level: the eye f back, px", r["value"]["distance_px"], 1000.0, 1e-6)
+        check("...with the assumed principal point said", r["conditioning"],
+              pred=lambda c: "principal point" in c.get("camera_assumed", ""))
+        r = ask(dict(doc, perspective="two", scale=cm35))
+        check("two-point under a pitched camera's uprights: drawn, as a guide, to scale",
+              (r["verdict"], (r["value"] or {}).get("mm_per_px"), r.get("why", "")),
+              pred=lambda v: v[0] == "undetermined" and v[1] == 0.25
+              and v[2].startswith("drawn from a camera the marks do not measure"))
+
+
 def camera_in_out():
     """A camera in, and a camera out.
 
@@ -3687,6 +3828,7 @@ def main():
     ellipse_drawn_square_on()
     ellipse_family_level()
     circle_in_a_square()
+    top_view()
     arch_one_bezier()
     arch_point_on_the_curve()
     arch_handle_pairs()

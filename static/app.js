@@ -51,6 +51,7 @@
     dragPt: null,           // {layer, path, i} while moving a placed point
     results: null,
     consensus: null,
+    plan: null, planKey: null,  // the top view and the points it was asked for: see paintPlan()
     archFar: false,         // marking the far limb of an arch
     ringMark: false,        // marking an ellipse's rim rather than drawing it
     inSquare: false,        // an ellipse layer is taking clicks inside cells
@@ -371,6 +372,7 @@
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, W, H);
     $('#zoomLbl').textContent = Math.round(S.view.k * 100) + '%';
+    paintPlan();
     if (!S.bitmap) return;
 
     g.imageSmoothingEnabled = S.view.k < 2;
@@ -774,6 +776,100 @@
   function overFloor(r) {
     var c = (r || {}).conditioning || {};
     return (c.worst_move_px || 0) > (c.mark_accuracy_px || MARK_PX);
+  }
+
+  // The drawing from above, laid out the way a perspective is set up on paper:
+  // the eye, the picture plane, and a ray from the eye to each vanishing point.
+  // Derived like a fit -- asked for again whenever a point moves, never kept in
+  // the history -- and an answer for points that have moved since is dropped.
+  function planKey() {
+    if (!S.image || !(horizonVps(null) || camHorizon(null))) return null;
+    return JSON.stringify([S.perspective, S.scale, S.image.w, S.image.h, families().map(function (L) {
+      var c = (L.vpInfo || {}).conditioning || {};
+      return [L.id, L.vp, !!L.vertical, !!L.on_horizon, (L.refs || {}).square_of || null,
+              c.bootstrap_x || null, c.bootstrap_y || null];
+    })]);
+  }
+
+  function paintPlan() {
+    var key = planKey();
+    if (key !== S.planKey) {
+      S.planKey = key;
+      if (!key) S.plan = null;
+      else post('/api/plan', { doc: buildDoc() }).then(function (r) {
+        if (S.planKey === key) { S.plan = r; paintPlan(); }
+      });
+    }
+    var box = $('#plan'), r = S.plan, v = r && r.value;
+    box.classList.toggle('hidden', !key || !r || !$('#showPlan').checked);
+    if (box.classList.contains('hidden')) return;
+    var cond = r.conditioning || {}, why = r.why || '';
+    box.classList.toggle('und', !v);
+    box.classList.toggle('guide', !!v && r.verdict !== 'ok');
+    $('#planNote').textContent = !v ? 'no top view: ' + why.split(/[:;]/)[0]
+      : r.verdict !== 'ok' ? 'a guide only: ' + why.split(/[:;]/)[0]
+      : 'field of view ' + num(v.fov_deg, 1) + '°, ' + cond.fov_deg_range.join('–') + '°'
+        + (cond.focal_span_assumed || cond.camera_assumed ? ', partly assumed' : '');
+    box.title = [why, cond.focal_span && 'focal length ' + cond.focal_span, cond.camera_assumed,
+                 cond.distance_range_mm && 'the eye stands ' +
+                 cond.distance_range_mm.map(Math.round).join('\u2013') + ' mm back from the picture plane']
+      .filter(Boolean).join('\n\n');
+    if (!v) return;
+
+    var c = $('#planView'), g = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
+    var cw = c.clientWidth, ch = c.clientHeight;
+    if (c.width !== Math.round(cw * dpr) || c.height !== Math.round(ch * dpr)) {
+      c.width = Math.round(cw * dpr); c.height = Math.round(ch * dpr);
+    }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, cw, ch);
+    var d = v.distance_px, pic = v.picture, back = cond.distance_range_px || [d, d], far = back[1];
+    var fams = families().filter(function (L) { return v.families[L.id]; });
+    // the eye, the picture, and every vanishing point not too far off to the side
+    var half = Math.max(Math.abs(pic[0][0]), Math.abs(pic[1][0])), xs = [0, pic[0][0], pic[1][0]];
+    fams.forEach(function (L) {
+      var at = v.families[L.id].at;
+      if (at && Math.abs(at[0]) < 4 * half) xs.push(at[0]);
+    });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs), y0 = Math.min(0, d - far);
+    var m = 9, k = Math.min((cw - 2 * m) / Math.max(x1 - x0, 1e-9), (ch - 2 * m) / (d - y0));
+    var P = function (q) { return [cw / 2 + (q[0] - (x0 + x1) / 2) * k, ch - m - (q[1] - y0) * k]; };
+    var line = function (a, b) {
+      a = P(a); b = P(b); g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+    };
+    var eye = P([0, 0]), R = 2 * (cw + ch) / k;               // off the canvas, whichever way
+    var ink = getComputedStyle(c).color;                      // the panel's, light or dark
+    // what the picture takes in, and the picture plane it is cut from
+    g.fillStyle = ink; g.globalAlpha = 0.07;
+    g.beginPath(); g.moveTo(eye[0], eye[1]);
+    pic.forEach(function (q) { var s = P(q); g.lineTo(s[0], s[1]); });
+    g.fill(); g.globalAlpha = 1;
+    g.strokeStyle = $('#colHorizon').value; g.lineWidth = 1;
+    g.setLineDash([5, 4]); line([x0 - R, d], [x1 + R, d]);
+    g.setLineDash([1, 3]); line([0, 0], [0, d]);              // the line of sight
+    g.setLineDash([]); g.lineWidth = 2.5; line(pic[0], pic[1]);
+    fams.forEach(function (L) {
+      var F = v.families[L.id];
+      g.strokeStyle = g.fillStyle = L.color; g.lineWidth = 1.4;
+      line([0, 0], F.at || [F.dir[0] * R, F.dir[1] * R]);
+      if (F.at) { var s = P(F.at); g.beginPath(); g.arc(s[0], s[1], 3, 0, 2 * Math.PI); g.fill(); }
+    });
+    // where the eye stands, and how far back it might stand
+    g.strokeStyle = g.fillStyle = ink; g.globalAlpha = 0.35; g.lineWidth = 5; g.lineCap = 'round';
+    line([0, d - far], [0, d - back[0]]);
+    g.globalAlpha = 1; g.lineCap = 'butt';
+    g.beginPath(); g.arc(eye[0], eye[1], 3.5, 0, 2 * Math.PI); g.fill();
+    // To scale once the picture's real size is given: a bar of 1, 2 or 5 x 10^n
+    // mm, no longer than 60 px, and the eye's distance along the line of sight.
+    var mpp = v.mm_per_px;
+    if (!mpp) return;
+    var mm = 60 * mpp / k, p10 = Math.pow(10, Math.floor(Math.log10(mm)));
+    mm = (mm >= 5 * p10 ? 5 : mm >= 2 * p10 ? 2 : 1) * p10;
+    var x = m + mm / mpp * k, y = ch - m;
+    g.lineWidth = 1; g.font = '10px system-ui';
+    g.beginPath(); g.moveTo(m, y - 4); g.lineTo(m, y); g.lineTo(x, y); g.lineTo(x, y - 4); g.stroke();
+    g.fillText(mm >= 1000 ? mm / 1000 + ' m' : mm + ' mm', m, y - 6);
+    g.fillText(num(v.distance_mm, 0) + ' mm', eye[0] + 5, (eye[1] + P([0, d])[1]) / 2);
   }
 
   // ---------------------------------------------------------------- drawing
@@ -1608,11 +1704,13 @@
     sizeState();
     // The numbers on screen are in the old units, so they are the wrong
     // numbers now. Same reasoning as setPerspective: re-ask, do not re-label.
-    if (was !== JSON.stringify(S.scale) && S.consensus) {
-      S.consensus = null; S.consensusBoth = null;
-      $('#results').textContent = '';
-      $('#resultsHint').classList.remove('hidden');
-      paint();
+    if (was !== JSON.stringify(S.scale)) {
+      if (S.consensus) {
+        S.consensus = null; S.consensusBoth = null;
+        $('#results').textContent = '';
+        $('#resultsHint').classList.remove('hidden');
+      }
+      paint();                  // the top view is drawn to it
     }
   }
 
@@ -3447,6 +3545,8 @@
     $('#showCand').onchange = paint;
     $('#showFits').onchange = paint;
     $('#showMoves').onchange = paint;
+    $('#showPlan').onchange = paint;
+    document.addEventListener('labkit:theme', paint);   // the top view's ink is the panel's
 
     var c = $('#view');
     c.addEventListener('mousedown', onDown);

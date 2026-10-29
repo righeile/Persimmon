@@ -29,6 +29,14 @@ main { height: calc(100vh - 41px); }
 .chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .chk input { margin: 0; }
 .viewbar input[type=color] { width: 20px; height: 16px; padding: 0; margin-left: -6px; }
+.plan {
+  position: absolute; right: 8px; bottom: calc(100% + 6px); width: 230px; padding: 4px 6px 5px;
+  font-size: 11px; background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border: 1px solid var(--line); border-radius: 6px;
+}
+#planView { display: block; width: 100%; height: 150px; }
+.plan.guide #planView { opacity: .5; }
+.plan.und #planView { display: none; }
 
 .grow { flex: 1 1 auto; min-width: 0; }
 .listing { max-height: 42vh; overflow-y: auto; margin-top: 4px; }

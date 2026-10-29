@@ -1965,6 +1965,55 @@ def check():
                             "total": len(results)}, ppm))
 
 
+@app.post("/api/plan")
+def plan_view():
+    """The drawing seen from above: where the eye stands, the picture plane,
+    and which way each family runs -- the plan a perspective is set up from on
+    paper, read back off the vanishing points and the horizon.
+
+    All of it is the camera seen from above, so it refuses where the camera
+    refuses and is known no better than the camera's focal length: the field
+    of view goes back with the range of it the marks allow, and a camera that
+    is only a guide makes the plan a guide, said so.
+    """
+    doc = _body().get("doc") or {}
+    cam, K = _camera(doc)
+    if K is None:
+        return jsonify(C.undetermined(cam.get("why") or "there is no camera"))
+    a, b = _horizon(doc, K)
+    if a is None:
+        return jsonify(C.undetermined(b))
+    im = doc.get("image") or {}
+    size = (float(doc.get("width") or im.get("w") or 1000),
+            float(doc.get("height") or im.get("h") or 1000))
+    vert = doc.get("vertical_vp")
+    vps = {k: _xy(v) for k, v in (doc.get("vps") or {}).items()
+           if v is not None and k != vert}
+    lo, hi, assumed = _focal_span(cam, K)
+    got = [RC.plan(Kx, a, b, vps, size) for Kx in (K, _with_f(K, lo), _with_f(K, hi))]
+    if got[0] is None:
+        return jsonify(C.undetermined(
+            "the camera looks straight up or down, so there is no forward for "
+            "a plan to be drawn along"))
+    fov = [g["fov_deg"] for g in got if g]
+    dist = [g["distance_px"] for g in got if g]
+    cond = {"focal_span_px": [round(lo, 1), round(hi, 1)],
+            "focal_span_assumed": assumed, "focal_span": _span_words(lo, hi, assumed),
+            "fov_deg_range": [round(min(fov), 1), round(max(fov), 1)],
+            "distance_range_px": [round(min(dist), 1), round(max(dist), 1)]}
+    if (cam.get("conditioning") or {}).get("assumed"):
+        cond["camera_assumed"] = cam["conditioning"]["assumed"]
+    # the plan's units are the picture's own pixels, so the picture's real size
+    # puts it to scale: millimetres beside the lengths, and mm_per_px to draw by
+    ppm = _px_per_mm(doc.get("scale"), *size)
+    if cam.get("verdict") == "undetermined":
+        cond["camera_undetermined"] = cam.get("why")
+        return jsonify(_add_mm({"value": got[0], "verdict": "undetermined", "conditioning": cond,
+                                "why": "drawn from a camera the marks do not measure: "
+                                       + (cam.get("why") or "")}, ppm))
+    return jsonify(_add_mm(C.readout(got[0], "ok", **cond), ppm))
+
+
 # ------------------------------------------------------------------- the render
 
 @app.post("/api/overlay")

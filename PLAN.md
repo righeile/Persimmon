@@ -3112,3 +3112,98 @@ line is no longer two clicks) and drawing the fitted curves back; C) Blender
 camera out with a fisheye lens. Open questions put to the user: photographs
 through a fisheye lens, or hand-drawn curvilinear perspective; polyline marks
 acceptable; camera-out in the first pass.
+
+## 48. "build top view" — the drawing from above — 2026-10-29
+
+*The request:* "if vanishing points and horizon are established, it should
+translate onto a top view in a small window in the bottom right".
+
+A top view is the plan a perspective is set up from on paper: the eye, the
+picture plane seen edge-on as a line, and from the eye a ray parallel to each
+family, meeting the picture plane at that family's vanishing point. All of it
+follows from the camera the checks already use, so nothing new is solved:
+
+- **`core/rectify.plan`** — the ground frame is `frame()` with the horizon's
+  two points and the principal ray as "up", so the plan's forward is the line
+  of sight laid flat. A page point goes onto the picture plane as
+  f·K⁻¹[x, y, 1] and is read off that frame. The eye stands f / cos(pitch)
+  back from where the picture plane meets eye level; the picture's width there
+  is where the horizon crosses its sides, which gives the field of view at eye
+  level, off-centre principal point included. The uprights are left out: from
+  above they are a point.
+- **`/api/plan`** — refuses where `_camera` refuses (one-point; three-point
+  with no upright family), and where the camera is only a guide (two-point
+  under uprights that contradict a level camera) it draws the plan,
+  `undetermined`, dimmed on the page. The focal slack is carried through as a
+  range of fields of view and eye distances; with no range from the marks it
+  is the usual ±10 %, said to be assumed.
+- **The page** — a 230 px inset anchored above the bar under the picture,
+  toggled by **top view** there. It appears once there is a horizon (two
+  horizontal families, or one and the uprights) and is asked for again
+  whenever a vanishing point moves; an answer for points that have moved since
+  is dropped, and none of it enters the undo history. The picture plane and
+  the picture's span take the horizon's colour, each ray its family's, and the
+  eye's possible distances are a pale bar through the eye. The label is
+  `top&nbsp;view`: as two words it wrapped on a narrow window and made the bar
+  a line taller.
+
+Not built: footprints of marked things on the ground (the plan of the room,
+not only its directions); a family whose lines stay parallel on the page,
+which has no vanishing point and so no ray, though in plan it runs along the
+picture plane; the 60° cone of comfortable vision.
+
+Checks: `top_view`, 25 rows. Each number is held against the world the
+synthetic camera was built in (directions to 1e-9°, distances to 1e-6 px,
+level and pitched-rolled-off-centre), a slope runs where its level run does,
+and each refusal is reached through the endpoint. Seven deliberate breaks were
+each caught: no left-right flip, f in place of f / cos(pitch), a symmetric
+field of view, forward taken along a family, a slope's mark left off the
+picture plane, a guide passed as measured, no focal slack. The flip was caught
+only once a row fed the horizon's two points the other way round. On the real
+page (launched as the user launches it): the fSpy fixture gives 60.6°
+(58.9–62.3°) as three-point and 60.3° as a two-point guide, dimmed and
+labelled, with the vanishing points 29.5 px apart between the two cameras;
+4.jpg as three-point says "no top view: … no family is marked as the upright
+one", and as two-point gives 38.5°, which is the f = 1266 px the check reports
+across 884 px. The toggle hides and shows it; no console errors. **629 passed,
+0 failed.**
+
+### 48.1 "when real sizes are specified, the top view should give a real scale" — 2026-10-29
+
+The plan's units are the picture's own pixels, so the picture's declared real
+size (the Real size panel) is already its scale; nothing new is measured. The
+endpoint now goes through `_add_mm` like every other readout, so the plan's
+lengths carry millimetre twins: `distance_mm` and `mm_per_px` beside
+`distance_px`, and `distance_range_mm` beside `distance_range_px`. Both had to
+be renamed to end in `_px` first: the plan was the one readout that broke the
+naming the twin pass relies on. With a size given, the inset draws a bar of
+1, 2 or 5 × 10ⁿ mm, at most 60 px long, at its lower left and writes the eye's
+distance beside the line of sight; the tooltip gives the range. The guide plan
+is to scale too, dimmed with the rest.
+
+The distance written is the plan's own: the eye to where the picture plane
+crosses eye level, f / cos(pitch). The camera readout's "the eye belongs …
+from the picture" is f, measured square to the sheet; the two agree only for
+a level camera.
+
+Two page faults found on the way: typing a size repainted nothing unless a
+consensus was on screen, so the plan would not have changed until the next
+mark; and the inset drew its eye and labels in white, which vanished on the
+light theme. It now draws in the panel's own text colour and repaints on a
+theme change.
+
+Not built: a scale for the scene from a known-size layer, which would put the
+plan in metres of the room rather than millimetres of the sheet. It needs the
+marked thing placed on the plan (the footprints left out of §48) before a
+metre on it means anything.
+
+Checks: three rows in `top_view` — no millimetres without a size; with
+35 cm across 1400 px, the eye's distance at 4 px to the mm, its range, and
+`mm_per_px` 0.25 on the measured plan and on the guide. Each fails on its own
+break: the twin pass dropped on the measured plan or on the guide, width and
+height swapped, the range left misnamed. On the real page: the fSpy fixture
+declared 42 cm wide gives 0.328 mm per px, the eye 359 mm back (347–372),
+and a 200 mm bar; in a magnified screenshot the line of sight and the bar
+measure about 180 and 100 px, the 1.8 to 1 that 359 to 200 should give;
+clearing the size takes the scale off again; the
+light theme draws in dark ink. **632 passed, 0 failed.**

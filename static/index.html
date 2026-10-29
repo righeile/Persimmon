@@ -137,6 +137,10 @@
   <div class="stageWrap">
     <canvas id="view"></canvas>
     <div class="viewbar">
+      <div class="plan hidden" id="plan">
+        <canvas id="planView"></canvas>
+        <div class="dim" id="planNote"></div>
+      </div>
       <span class="dim" id="cursor"></span>
       <span class="spacer"></span>
       <label class="chk"><input type="checkbox" id="showFits" checked> fits</label>
@@ -144,6 +148,7 @@
       <label class="chk"><input type="checkbox" id="showMoves"> corrections</label>
       <input type="color" id="colMoves" value="#ff2d55" title="Colour of the correction lines. The reference camera's stay violet.">
 
+      <label class="chk" title="The drawing seen from above: the eye, the picture plane, and a ray to each vanishing point. Shown once there is a horizon."><input type="checkbox" id="showPlan" checked> top&nbsp;view</label>
       <label class="chk"><input type="checkbox" id="showCand" checked> detected</label>
       <button class="small ghost" id="btnFit">Fit</button>
       <span class="dim" id="zoomLbl">100%</span>

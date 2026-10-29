@@ -45,6 +45,57 @@ def frame(K, vp_a, vp_b, vp_up=None):
     return np.stack([e1, e2, n])                  # rows: a proper rotation
 
 
+def plan(K, hz_a, hz_b, vps, size):
+    """The scene from above, the way a perspective is set up on paper: the eye
+    at the origin looking up the page (+y), the picture plane the line
+    y = distance in front of it, and each family a ray from the eye that meets
+    that line at its own vanishing point.
+
+    `hz_a` and `hz_b` are any two points on the horizon -- each is the
+    vanishing point of some level direction, which is all `frame` needs to
+    find the ground -- and `vps` is {id: point}. Units are pixels of the
+    picture plane, so the picture is as wide here as it is along its horizon.
+    None when the camera looks straight up or down: there is then no forward
+    to put at the top of the page.
+    """
+    K = np.asarray(K, float)
+    F = frame(K, hz_a, hz_b, vp_up=(K[0, 2], K[1, 2]))
+    if F is None:
+        return None
+    right, fwd = F[0], F[1]
+    if right[0] < 0:                    # the ground's normal came out pointing down
+        right = -right
+    Ki = np.linalg.inv(K)
+
+    def top(p):                         # a page point on the picture plane, from above
+        X = K[0, 0] * (Ki @ np.append(np.asarray(p, float)[:2], 1.0))
+        return np.array([X @ right, X @ fwd]), float(np.linalg.norm(X))
+
+    # where the horizon crosses the picture's sides: the picture's own width at
+    # eye level, which is the stretch of the picture plane the eye looks through
+    a, b = np.asarray(hz_a, float)[:2], np.asarray(hz_b, float)[:2]
+    d = b - a
+    w, h = float(size[0]), float(size[1])
+    if abs(d[0]) >= abs(d[1]):
+        ends = [a + (x - a[0]) / d[0] * d for x in (0.0, w)]
+    else:
+        ends = [a + (y - a[1]) / d[1] * d for y in (0.0, h)]
+    pic = sorted((top(e)[0] for e in ends), key=lambda q: q[0])
+    dist = float((pic[0][1] + pic[1][1]) / 2.0)
+    fov = float(np.degrees(np.arctan2(pic[1][0], dist) - np.arctan2(pic[0][0], dist)))
+
+    fams = {}
+    for k, v in vps.items():
+        q, nx = top(v)
+        n = float(np.linalg.norm(q))
+        if n < 1e-9 * nx:               # straight up: a point in plan, not a direction
+            continue
+        fams[k] = {"dir": (q / n).tolist(),
+                   "at": (q * dist / q[1]).tolist() if q[1] > 1e-9 * n else None}
+    return {"distance_px": dist, "picture": [p.tolist() for p in pic],
+            "fov_deg": fov, "families": fams}
+
+
 def homography(K, vp_a, vp_b, vp_up=None):
     """Image to a face-on view of the plane. Scale and position are arbitrary
     here; `fit` pins them to the marks."""
