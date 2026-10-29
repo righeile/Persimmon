@@ -2,74 +2,55 @@
 
 Finds the most parsimonious perspective.
 
-Persimmon checks the linear perspective of traditional artwork: sketches,
-watercolours, paintings, and photographs of them. You mark what you see:
-lines, rims, figures, shadows. It finds the vanishing points and the horizon
-and says how consistent the drawing is. No hand drawing is exact, so it also
-finds the nearest consistent perspective and shows how far each line would
-have to move to reach it.
+Persimmon checks the perspective of pictures made by hand: drawings,
+watercolours, paintings, and photographs of them. You mark what you see
+(lines, rims, figures, shadows), and it finds the vanishing points and the
+horizon, checks the rest of the picture against them, and shows how far each
+line would have to move for the whole picture to be consistent.
 
-It is a small local web app: a Python server on your own machine and a page in
-your browser.
+It runs on your own machine: a small Python server and a page in your browser.
 
-## What it checks
+## What it does
 
 - **Vanishing points and the horizon**, from families of lines, in 1-, 2- or
   3-point perspective.
-- **Consensus**: the nearest consistent perspective, with the move each line
-  needs, in pixels.
-- **Circles and ellipses** on a plane, including the circle inscribed in a
-  square formed by two line families.
-- **Arches and roofs**: round or pointed arches, arcades, gables and pitched
-  roofs, including the slope's vanishing point.
-- **Regular polygons**, **evenly spaced rows**, **proportion along an axis**
-  (by cross-ratio) and **symmetry**.
-- **Figures** standing on one ground, checked against the horizon.
-- **Cast shadows** from a lamp or the sun.
-- **Known sizes**, which turn the camera into a distance.
-- **Cameras**: it can read a camera solved in Blender or fSpy, and write the
-  camera the marks agree on back out as a Blender script.
-- **Photographs of a sheet** can be trimmed to the sheet, with the keystone
+- **Consensus**: the nearest consistent perspective, and the move each line
+  needs to reach it.
+- **Checks against that perspective**: circles and ellipses (including the
+  circle in a square), arches and roofs, regular polygons, evenly spaced rows,
+  proportion along an axis, symmetry, figures standing on one ground, cast
+  shadows from the sun or a lamp, and things of known size.
+- **A top view** of the scene from above: the eye, the picture plane, a ray to
+  each vanishing point, and the field of view. It is drawn to scale once you
+  give the picture's real size.
+- **Cameras**: reads a camera solved in Blender or fSpy and measures your marks
+  against it, and writes the camera your marks agree on as a Blender script.
+- **Photographs of a sheet** are trimmed to the sheet, with the keystone
   undone.
+- **Output**: the marks as a `.json` file, and the overlay as a vector PDF.
 
-## Two rules the code keeps
+## How to read the results
 
-**Every readout comes with its conditioning, and refuses when the question is
-ill-posed.** Every check returns `{value, verdict, conditioning}`, and the
-verdict may be `"undetermined"`. The page shows that as plainly as a number,
-never as a blank or a zero. During the project, four results had to be
-withdrawn because they had been reported with a confidence they had not
-earned. The refusals are there for a reason.
+No hand drawing is exact, so Persimmon does not ask whether a picture is
+perfect. It asks which perspective is nearest to what was drawn, and how far
+each line is from it. A move smaller than a hand mark is worth (about 9 px) is
+not an error, and the picture is reported as **already consistent**.
 
-**It is semi-automatic: you mark what the pixels cannot give.** Automatic
-extraction failed again and again on real paintings, because of occlusion,
-watercolour texture and low contrast. Hand marks land within about 9 px of the
-paint, which is plenty for every check here. So marking is the backbone, and
-edge detection is a shortcut that you can accept, reject or ignore.
+Every result comes with how well the marks pin it down. When the marks cannot
+settle a question, the answer is **undetermined**, with the reason, rather
+than a confident number.
 
-## A drawing is not a diagram
+Marking is done by hand on purpose. Automatic edge detection fails on real
+paintings (occlusion, brush texture, low contrast), so it is offered only as
+suggestions you can take or ignore.
 
-A hand-drawn picture is never exact, so calling it inconsistent tells you
-nothing. **Consensus** asks a different question: which perspective is nearest
-to what was actually drawn, and how far would each line have to move to reach
-it? A move smaller than the ~9 px a hand mark is worth is not an error. In that
-case the verdict says `already consistent`, rather than sending you to redraw a
-line that was right.
-
-Consensus gives two readings:
-
-- **As drawn** lets the camera roll, which is what the picture says.
-- **Forced level** assumes the eye is level, and prints what that assumption
-  costs.
-
-The worked example is `testdata/4.jpg`. Marked by hand in the app at 45 %
-zoom, it came out already consistent: the worst line was 1.3 px off, and the
-focal length was 1260 px. The same lines drawn precisely in Illustrator give
-1250 px.
+For example, `testdata/4.jpg` marked by hand at 45 % zoom comes out already
+consistent: the worst line is 1.3 px off, and the focal length is 1260 px. The
+same lines drawn precisely in Illustrator give 1250 px.
 
 ## Getting started
 
-You need Python 3.10 or newer. Development used Python 3.13.
+You need Python 3.10 or newer.
 
 ```bash
 git clone https://github.com/righeile/Persimmon.git
@@ -79,21 +60,18 @@ python3 -m venv .venv
 .venv/bin/python app.py
 ```
 
-Then open <http://127.0.0.1:8830>. To use another port, start it with
-`app.py --port 8831`.
+Then open <http://127.0.0.1:8830>. Use `--port` to pick another port. The
+server listens on 127.0.0.1 only and keeps nothing: your marks stay in the page
+until you save them.
 
-There are also launchers you can double-click:
+You can also double-click a launcher:
 
 - **`run_mac.command`** (macOS) uses `.venv` if there is one, and offers to
-  install any missing packages.
-- **`run_windows.bat`** (Windows) runs the `python` on your PATH, so install
-  the requirements into that one.
+  install missing packages.
+- **`run_windows.bat`** (Windows) uses the `python` on your PATH.
 
-Both launchers stop an older copy of the app on the same port, open the
-browser, and honour a `PORT` environment variable.
-
-By default the server listens on 127.0.0.1 only. It keeps nothing between
-requests: the marks live in the page until you save them.
+Both open the browser, replace a copy of Persimmon already running on the
+port, and honour a `PORT` environment variable.
 
 [Blender](https://www.blender.org) is optional. You only need it to read a
 camera from a `.blend` file.
@@ -101,21 +79,20 @@ camera from a `.blend` file.
 ## Using it
 
 1. **Open** a picture, or pick one of the test pictures.
-2. If it is a photograph of a sheet, **Find sheet** or **Place corners**, then
-   **Apply**. This trims the picture to the sheet and undoes the keystone.
-3. Choose the perspective the drawing claims: **3-point**, **2-point** or
+2. If it is a photograph of a sheet, use **Find sheet** or **Place corners**,
+   then **Apply**.
+3. Choose the perspective the picture claims: **3-point**, **2-point** or
    **1-point**. This is the claim being checked, not a hint to the solver.
 4. **Add** a layer, choose what it holds, and mark on the picture.
-   **Detect edges** can offer line families, but nothing is adopted until you
-   click it.
+   **Detect edges** offers line families; nothing is used until you click it.
 5. **Check** runs every check against the marks. **Consensus** finds the
    nearest consistent perspective.
-6. **Save marks** writes a `.json` file that you can load again. If a marks
-   file sits next to a picture, the app offers it when you open that picture.
-   **Save PDF** writes the marks as vector lines over the picture.
+6. **Save marks** writes a `.json` file. When one sits next to a picture, the
+   app offers it on opening. **Save PDF** writes the marks as vector lines over
+   the picture.
 
-You can also give the picture's real size, in mm, cm, m, in or ft, so that
-readouts are in those units instead of pixels.
+Give the picture's real size (in mm, cm, m, in or ft) to get results in those
+units as well as pixels.
 
 | layer | you mark | it gives |
 |---|---|---|
@@ -132,21 +109,6 @@ readouts are in those units instead of pixels.
 | landmark pairs | left, then right | symmetry |
 | known size | base, then top, of something whose real size you know | the distance from the viewer |
 
-An arc is read against its own surface. It is only read against the horizon
-when it lies flat, and with no surface the check refuses rather than assume
-one.
-
-Each layer has its own colour, set in its editor. The horizon and the
-correction lines have colour wells under the picture. Recolour a line when you
-cannot see it against the paint; the PDF uses the same colours.
-
-Once there is a horizon, a small **top view** at the bottom right shows the
-drawing from above: the eye, the picture plane, and a ray from the eye to each
-vanishing point, with the field of view beneath. Where the camera is refused,
-the window says why; where the camera is only a guide, the plan is dimmed and
-says so. Given the picture's real size, the plan is drawn to scale, with a
-scale bar and the eye's distance in millimetres.
-
 | to | do |
 |---|---|
 | pan | drag with no layer selected, middle-drag, alt- or shift-drag, or scroll |
@@ -158,42 +120,37 @@ scale bar and the eye's distance in millimetres.
 | cancel a pending mark | `Escape` |
 | undo / redo | ⌘Z / ⇧⌘Z or ⌘Y (ctrl on Windows) |
 
-## A camera in, a camera out
+Each layer's colour is set in its editor. The bar under the picture has colour
+wells for the horizon and the correction lines, and the switch for the top
+view.
 
-**Camera in** reads a solved camera from a Blender `.blend`, an fSpy `.fspy`
-or a plain `.json`. It draws the camera's three vanishing points and horizon on
-the picture, and prices the marks against it in pixels of movement. One family
-of lines is enough. The camera is somebody's claim, not the truth: the card
-says how far the marks are from it, and how far they are from being consistent
-on their own.
+## Cameras in and out
 
-To read a `.blend` file, Blender runs in the background with the file's
-scripts switched off. Persimmon looks for Blender in this order:
+**Camera in** reads a solved camera from a Blender `.blend`, an fSpy `.fspy` or
+a plain `.json`, draws its vanishing points and horizon, and shows how far your
+marks are from it. One family of lines is enough. Blender opens the file in the
+background with the file's own scripts switched off, and is looked for in this
+order: the `PERSIMMON_BLENDER` path, `/Applications/Blender*.app` on macOS,
+`C:\Program Files\Blender Foundation\Blender*` on Windows, then `blender` on
+your PATH.
 
-1. the path in `PERSIMMON_BLENDER`
-2. `/Applications/Blender*.app` on macOS
-3. `C:\Program Files\Blender Foundation\Blender*` on Windows
-4. `blender` on your PATH
-
-**Camera out** writes the camera the marks agree on as a Blender script, with
-the picture as the background. To use it, open Blender and go to
-Scripting > Open, choose the file, then Run Script. It refuses wherever the
-readout refuses: a lens that was not measured is never written down. If the
-marks had no line to spare, the header says `NOT TESTED`. A fit with nothing
-to spare is `undetermined`, because any set of marks fits a camera that has as
-many numbers as the marks have angles.
+**Camera out** writes the camera your marks agree on as a Blender script, with
+the picture as the background. In Blender, choose Scripting > Open, pick the
+file, and click Run Script. It refuses when the marks give no camera, so a lens
+that was not measured is never written down. When the marks had no line to
+spare for testing the camera, it is still written, with `NOT TESTED` in the
+header.
 
 ## Running the checks
 
 ```bash
-.venv/bin/python selfcheck.py        # about 600 checks, every verification in PLAN.md (~25 s)
+.venv/bin/python selfcheck.py        # over 600 checks; under a minute
 .venv/bin/python core/consensus.py   # the consensus fit's own self-check
-.venv/bin/python core/figure.py      # proportion and symmetry's own self-check
+.venv/bin/python core/figure.py      # proportion and symmetry
 ```
 
-Checks that need something missing are skipped, and the output says so. If
-Blender is not installed, for example, the camera export is not run through a
-real Blender.
+Checks that need something you do not have, such as Blender, are skipped, and
+the output says so.
 
 ## Layout
 
@@ -211,21 +168,19 @@ core/           the geometry, with no web code
   export.py       the vector PDF
 static/         the page: index.html, app.js, app.css
 selfcheck.py    the verification suite
-testdata/       the pictures and marks that the checks run on
+testdata/       the pictures and marks the checks run on
 PLAN.md         the specification and lab notebook
 ```
 
 `labkit/` and `static/labkit.*` are a vendored copy of a small toolkit shared
-with other apps. Persimmon uses its file browser, theme and plot style. The
-copy is overwritten whenever the toolkit is synced, so edits made here do not
-last.
+with other apps (file browser, theme, plot style). The copy is overwritten
+whenever the toolkit is synced, so edits made here do not last.
 
-## Status and limits
-
-`PLAN.md` is the specification. It holds the design rules, the verification
-table, the bugs found and what each one cost, and the worked example.
+## Limits
 
 Persimmon models a pinhole camera, so it handles linear perspective only. It
-does not yet detect a fisheye or curvilinear drawing, and can call one
-consistent when it is not. PLAN.md §47 measures what supporting fisheye would
-take.
+does not detect a fisheye or curvilinear picture, and can call one consistent
+when it is not. PLAN.md §47 measures what supporting fisheye would take.
+
+`PLAN.md` holds the design rules, the verification behind every check, and the
+bugs found along the way.
