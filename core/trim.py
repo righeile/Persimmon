@@ -155,9 +155,13 @@ def _fallback(q, why):
     return int(round(ow)), int(round(oh)), None, why
 
 
-def warp(img, quad, out_wh):
-    """Map the quadrilateral onto a clean rectangle of out_wh."""
-    q = _order(quad).astype(np.float32)
+def warp(img, quad, out_wh, ordered=False):
+    """Map the quadrilateral onto a clean rectangle of out_wh.
+
+    `ordered` trusts the corners as given: TL, TR, BR, BL of the OUTPUT, which
+    a picture turned hard can put in any order round their middle.
+    """
+    q = (np.asarray(quad, float) if ordered else _order(quad)).astype(np.float32)
     ow, oh = int(out_wh[0]), int(out_wh[1])
     dst = np.array([[0, 0], [ow - 1, 0], [ow - 1, oh - 1], [0, oh - 1]], np.float32)
     H = cv2.getPerspectiveTransform(q, dst)

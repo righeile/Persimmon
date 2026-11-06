@@ -1392,6 +1392,12 @@ def detection():
         fams = ask("shadowtest.png", **presets["sparse"]).get_json()["families"]
         check("preset sparse: shadowtest's shadows offered, deg off",
               min(off(Ks, f, sun) for f in fams), pred=lambda e: e < 2)
+        tall = lambda fams: min(fams, key=lambda f: off(K4, f, np.array([287, -69267, 1.0])))
+        got = [tall(ask("4.jpg", **presets[p]).get_json()["families"]) for p in ("photograph", "freehand")]
+        check("preset photograph: 4.jpg's verticals held tighter than freehand's, lines",
+              [f["n"] for f in got], pred=lambda n: n[0] < n[1])
+        check("  and still found, deg off", off(K4, got[0], np.array([287, -69267, 1.0])), pred=lambda e: e < 1)
+        check("  merging as freehand does", presets["photograph"]["merge_deg"], presets["freehand"]["merge_deg"], 0)
 
 
 def fixture_4jpg():
@@ -1434,6 +1440,525 @@ def fixture_4jpg():
                          np.array([-18.0, 844.0]), a_range=(3000, 6000))
     check("f spans 910-1320 over the right VP's range", span,
           pred=lambda s: s[0] < 920 and s[1] > 1300)
+
+
+def vault_ribs():
+    """A vault's ribs: their chords are no lines, and they sort by the plane they lie in."""
+    print("\nribs of a vault")
+    import tempfile
+    import cv2
+    import app as A
+    from core import arches as AR
+    from core import consensus as CN
+
+    F, EYE, SIZE = 1250.0, (216.0, 1300.0), 1000
+    Xc, W2, Ys, Z0, DZ = 0.11, 0.278, 0.686, 0.99, 0.1134
+
+    def nave(tilt=0.0, runs=None, ribs_too=True, gone=(), short=(), swell=0.0, at=None, running=True):
+        """A nave's vault seen from the floor, a little off its axis, with its ridge,
+        courses and uprights: (picture, [(kind, rib)], uprights' point, nave's point).
+
+        An even boss takes a flat rib a side, an odd one a rib to the pier before it
+        and one to the pier after, half a bay along. `runs(rng)` gives each rib its own.
+        The ribs numbered in `gone` are left out of the picture, and those in `short`
+        stop short of the foot. 3D ribs stand `swell` off the flat ribs' section between
+        crown and foot. `at` gives the bosses' depths in bays where they are not regular,
+        and with `running` off no line runs to the nave's point.
+        """
+        a = np.radians(tilt)
+        Rx = np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
+
+        def page(P):
+            q = P @ Rx.T
+            return np.c_[EYE[0] + F * q[:, 0] / q[:, 2], EYE[1] - F * q[:, 1] / q[:, 2]]
+
+        rng = np.random.default_rng(2)
+
+        def rib(k, sd, run):
+            t = np.linspace(0, 1, 120)
+            Y = Ys + (1 - Ys) * (1 - t ** 1.7) + swell * t * (1 - t) * (run != 0)
+            return page(np.c_[Xc + sd * W2 * t, Y, Z0 + (k if at is None else at[k]) * DZ + run * DZ * t])
+
+        ribs = []
+        for k in range(14) if ribs_too else ():
+            for sd in (1, -1):
+                for kind, run in ([("flat", 0)] if k % 2 == 0 else [("3D", -1), ("3D", 1)]):
+                    ribs.append((kind, rib(k, sd, run if runs is None else runs(rng))))
+        im = np.full((SIZE, SIZE), 40, np.uint8)
+
+        def draw(p):
+            cv2.polylines(im, [np.round(p * 16).astype(np.int32)], False, 200, 3, cv2.LINE_AA, 4)
+
+        for i, (_, q) in enumerate(ribs):
+            if i not in gone:
+                draw(q[:75] if i in short else q)
+        z = np.array([Z0 - 0.3, Z0 + 15 * DZ])
+        for X, Y in ((Xc, 1.0), (Xc + W2, Ys), (Xc + W2, Ys - 0.1), (Xc - W2, Ys), (Xc - W2, Ys - 0.1)) if running else ():
+            draw(page(np.c_[np.full(2, X), np.full(2, Y), z]))
+        for k in range(0, 14, 2):
+            for sd in (1, -1):
+                draw(page(np.c_[np.full(2, Xc + sd * W2), np.array([Ys, Ys - 0.5]), np.full(2, Z0 + k * DZ)]))
+        im = cv2.GaussianBlur(im, (0, 0), 0.8)
+        im = np.clip(im + rng.normal(0, 2.0, im.shape), 0, 255).astype(np.uint8)
+        up, on = Rx @ [0, 1.0, 0], Rx @ [0, 0, 1.0]
+        at = lambda d: np.array([EYE[0] * d[2] + F * d[0], EYE[1] * d[2] - F * d[1], d[2]])
+        return im, ribs, at(up), at(on)[:2] / at(on)[2]
+
+    def looked(gray):
+        s, g = V.lines(cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR), min_len=40, join=0.015)
+        return s, AR.vault(s, g)
+
+    def tally(R, ribs):
+        """(right, wrong, undetermined) of the curves that follow one true rib all the way."""
+        out = [0, 0, 0]
+        for r in R["ribs"]:
+            p = np.array(r["pts"])
+            d = [np.hypot(*(p[:, None] - q[None]).transpose(2, 0, 1)).min(1) for _, q in ribs]
+            j = int(np.argmin([x.mean() for x in d]))
+            if np.percentile(d[j], 90) <= 5:
+                out[2 if r["verdict"] == "undetermined" else 0 if r["verdict"] == ribs[j][0] else 1] += 1
+        return out
+
+    gray, ribs, Vp, N = nave()
+    s, found = looked(gray)
+    check("a vault's point is found, px off", np.hypot(*(np.array(found["point"]) - N)), pred=lambda e: e < 3)
+    all_rib = np.vstack([q for _, q in ribs])
+    mid = (s[:, :2] + s[:, 2:]) / 2
+    on_rib = np.hypot(*(mid[:, None] - all_rib[None]).transpose(2, 0, 1)).min(1) < 3
+    through = V.resid_deg(s, np.r_[N, 1.0]) < 0.5
+    check("  the chords of its ribs are no lines", found["chords"][on_rib & ~through].mean(), pred=lambda v: v > 0.8)
+    check("  the ridge and the courses stay", int((~found["chords"] & through).sum()), pred=lambda n: n >= 5)
+    check("  and it is the lines through it that say where it is", found["lines"], pred=lambda n: n >= 5)
+
+    R = AR.sort(found, Vp)
+    right, wrong, und = tally(R, ribs)
+    check("its ribs are sorted", R["verdict"], pred=lambda v: v == "sorted")
+    check("  none called the wrong family", wrong, 0, 0)
+    check("  and most called at all", right / (right + und), pred=lambda v: v > 0.6)
+    check("  both families are there", {r["verdict"] for r in R["ribs"]} >= {"flat", "3D"}, pred=lambda v: v)
+    true = {sd: np.mean([np.hypot(*(q[0] - N)) / np.hypot(*(q[-1] - N)) for k, q in ribs
+                         if k == "flat" and np.sign(q[-1, 0] - q[0, 0]) == sd]) for sd in (1, -1)}
+    check("  a flat rib's ratio is read on the right, %", abs(R["ratio"]["right"] / true[1] - 1) * 100, pred=lambda e: e < 3)
+    check("  and on the left, %", abs(R["ratio"]["left"] / true[-1] - 1) * 100, pred=lambda e: e < 3)
+    check("  half a bay is read, of the nearest rib's depth", R["half_bay"], DZ / Z0, 0.02)
+    check("  ribs with no lines in them do not do as well", R["chance"], pred=lambda p: p <= 0.01)
+    a3 = next(r for r in R["ribs"] if r["verdict"] == "3D")
+    check("  a 3D rib says how far it runs, half a bay's worth", abs(a3["run"]) * 100, pred=lambda v: 3 < v < 20)
+
+    tipped, ribs7, Vp7, N7 = nave(tilt=7)
+    _, f7 = looked(tipped)
+    R7 = AR.sort(f7, Vp7)
+    r7 = tally(R7, ribs7)
+    check("a camera tipped 7 deg: the point is found, px off", np.hypot(*(np.array(f7["point"]) - N7)), pred=lambda e: e < 3)
+    check("  and the ribs sorted, right and wrong", (r7[0], r7[1]), pred=lambda v: v[0] >= 15 and v[1] == 0)
+    bare = AR.sort(f7)
+    check("  a tipped camera with no uprights to go by is no worse, wrong", tally(bare, ribs7)[1], 0, 0)
+
+    # the refusals, each with the picture that earns it
+    rows = AR._rows(found["curves"], found["point"], Vp)
+    half = {sd: [z[3] for z in rows[sd]] for sd in rows}
+    foot = {1: [p[len(p) // 2:] for p in half[1]], -1: [p[:len(p) - len(p) // 2] for p in half[-1]]}
+    got = AR.sort({**found, "curves": half[1]}, Vp)
+    check("ribs down one side only sort nothing", got["why"], pred=lambda v: "both sides" in v)
+    got = AR.sort({**found, "curves": foot[1] + foot[-1]}, Vp)
+    check("ribs all stopping short of the crown sort nothing", got["why"], pred=lambda v: "crown" in v)
+    got = AR.sort({**found, "curves": half[1] + foot[-1]}, Vp)
+    check("one side short of the crown: the other is sorted", got["verdict"], pred=lambda v: v == "sorted")
+    left = [r for r in got["ribs"] if r["side"] == "left"]
+    check("  and the short side left undetermined", (len(left), {r["verdict"] for r in left}), pred=lambda v: v[0] >= 4 and v[1] == {"undetermined"})
+    check("  with no ratio to report", sorted(got["ratio"]), pred=lambda v: v == ["right"])
+    gray4, ribs4, Vp4, _ = nave(runs=lambda rng: rng.uniform(-1.4, 1.4))
+    got = AR.sort(looked(gray4)[1], Vp4)
+    check("ribs of every run lie on no three lines, and are refused", (got or {}).get("why", ""), pred=lambda v: "chance" in v)
+    gray5, *_ = nave(ribs_too=False)
+    _, f5 = looked(gray5)
+    check("no ribs, no vault", (f5["point"], AR.sort(f5)), pred=lambda v: v == (None, None))
+    check("no lines at all, no vault", AR.vault(np.zeros((0, 4)), gray5)["point"], pred=lambda v: v is None)
+
+    # the rule: the ribs found say how the vault was built, and the rest follows
+    def along(q, kind, U):
+        """The rib of the rule of this family that lies along q, and how many px off it stays."""
+        px = [np.percentile(np.hypot(*(np.array(r["pts"])[:, None] - q[None]).transpose(2, 0, 1)).min(1), 90) if r["family"] == kind
+              else np.inf for r in U["ribs"]]
+        return U["ribs"][int(np.argmin(px))], min(px)
+
+    U = R["rule"]
+    check("the ribs found give a regular vault", U["verdict"], pred=lambda v: v == "holds")
+    check("  half a bay, of the nearest rib's depth", U["half_bay"], DZ / Z0, 0.01)
+    check("  nearly all the ribs found follow it", U["on"] / U["of"], pred=lambda v: v > 0.9)
+    check("  more than would with their feet anywhere", U["on"] - U["by_chance"], pred=lambda n: n >= 8)
+    check("  to within, px at the median", U["miss_px"], pred=lambda e: e < 6)
+    check("  a boss left out is predicted from the others, px, and worse than if it stayed", (U["held_out_px"], U["miss_px"]),
+          pred=lambda v: v[1] < v[0] < 6)
+    check("  and the crowns alone repeat at its step", U["peak"], pred=lambda e: e <= 0.03)
+    check("  every rib of the vault is built, the worst px off", max(along(q, k, U)[1] for k, q in ribs), pred=lambda e: e < 9)
+    check("  in its own family, an even boss flat and an odd one 3D", {(r["boss"] % 2, r["family"]) for r in U["ribs"]},
+          pred=lambda v: v == {(0, "flat"), (1, "3D")})
+    check("  and it decides the families of the ribs it finds", tally(R, ribs)[1], 0, 0)
+    check("  leaving undetermined the ones that lie between two of its ribs", sum(r["verdict"] == "undetermined" for r in R["ribs"]),
+          pred=lambda n: n >= 1)
+    most, AR.MOST_CHANCE = AR.MOST_CHANCE, -1
+    check("  and it vouches for ribs that chance alone would refuse", AR.sort(found, Vp)["verdict"], pred=lambda v: v == "sorted")
+    AR.MOST_CHANCE = most
+    twice = AR.sort({**found, "point": [2 * c for c in found["point"]], "diag": 2 * found["diag"], "curves": [2 * q for q in found["curves"]]},
+                    np.r_[2 * Vp[:2], Vp[2]])["rule"]
+    check("  a picture twice the size gives one rule", twice.get("on"), U["on"], 0)
+    U7 = R7["rule"]
+    check("a tipped camera: the rule holds", U7["verdict"], pred=lambda v: v == "holds")
+    check("  and its ribs stand on the true ones, px at the median", np.median([along(q, k, U7)[1] for k, q in ribs7]), pred=lambda e: e < 8)
+
+    gone = {0, 1} | set(range(7, 28, 5))
+    gray6, ribs6, Vp6, _ = nave(gone=gone)
+    U6 = AR.sort(looked(gray6)[1], Vp6)["rule"]
+    built = [along(ribs6[i][1], ribs6[i][0], U6) for i in sorted(gone)]
+    check("ribs erased from the picture are built all the same, the worst px off", max(e for _, e in built), pred=lambda e: e < 12)
+    check("  and none of them said to be found", [r["found"] for r, _ in built], pred=lambda v: not any(v))
+    check("  while the ribs that are there are", sum(r["found"] for r in U6["ribs"]), pred=lambda n: n >= 20)
+    gray8, ribs8, Vp8, _ = nave(swell=0.06)
+    U8 = AR.sort(looked(gray8)[1], Vp8)["rule"]
+    check("3D ribs with a section of their own: the rule holds", U8["verdict"], pred=lambda v: v == "holds")
+    check("  and reads it, the worst px off", max(along(q, k, U8)[1] for k, q in ribs8), pred=lambda e: e < 9)
+    gray9, ribs9, Vp9, _ = nave(short={i for i in range(40) if i % 10 < 7})
+    U9 = AR.sort(looked(gray9)[1], Vp9)["rule"]
+    check("most ribs stop short of the foot: the rule holds", U9["verdict"], pred=lambda v: v == "holds")
+    check("  and its ribs run on to the feet, px short at worst", max(np.hypot(*(np.array(along(q, k, U9)[0]["pts"]) - q[-1]).T).min()
+                                                                     for k, q in ribs9), pred=lambda e: e < 12)
+    pick = np.random.default_rng(5)
+    gray10, *_ = nave(runs=lambda rng: pick.uniform(-1, 1))
+    got = AR.sort(looked(gray10)[1], Vp)
+    check("crowns in their places with the feet anywhere are no vault's", got["why"] or got["rule"]["why"], pred=lambda v: "feet anywhere" in v)
+    check("the short side gives no section, so no rule", AR.sort({**found, "curves": half[1] + foot[-1]}, Vp)["rule"]["verdict"], pred=lambda v: v == "undetermined")
+    gray7, *_ = nave(runs=lambda rng: 0.0)
+    got = AR.sort(looked(gray7)[1], Vp)
+    check("flat ribs at every boss are not this rule", got["why"] or got["rule"]["why"], pred=lambda v: "chance" in v or "repeat" in v)
+    none = AR._rule([{"sd": sd, "xy": np.c_[np.arange(9.0), np.arange(9.0)], "u": 5.0, "whole": True, "verdict": "undetermined", "run": None}
+                     for sd in (1, -1)], N, Vp, 0.1, 0.0, {1: np.ones(2), -1: -np.ones(2)}, 1400.0)
+    check("no firm ribs: refused, not a crash", none["why"], pred=lambda v: "firm" in v)
+
+    # three lines, from known numbers
+    x = np.linspace(0.3, 1, 15)
+    kind = np.tile([-1, 0, 1], 5)
+    flat, c, _ = AR._bands({1: (x, 0.2 + kind * 0.1 * x), -1: (x, 0.35 + kind * 0.1 * x)})
+    check("three lines closing with depth: half a bay", c, 0.1, 0.006)
+    check("  a side's flat ratio", flat[1], 0.2, 0.004)
+    check("  the other's, which may differ", flat[-1], 0.35, 0.004)
+    near = np.linspace(1, 0.7, 12)
+    xs = np.r_[near, np.linspace(0.3, 0.38, 14)]
+    ys = np.r_[0.2 + np.tile([-1, 0, 1], 4) * 0.1 * near, np.linspace(0.356, 0.364, 14)]
+    check("  many far ribs do not outvote the near ones, which stand clear", AR._bands({1: (xs, ys)})[0][1], 0.2, 0.01)
+
+    # what a vault's lines say about the rest of the picture
+    ray = lambda deg, at=N: np.c_[at + 300 * np.c_[np.sin(np.radians(deg)), -np.cos(np.radians(deg))],
+                                  at + 900 * np.c_[np.sin(np.radians(deg)), -np.cos(np.radians(deg))]]
+    piers = ray(np.linspace(-4, 4, 9))
+    check("a bundle of near parallels says nothing of where they meet", AR._across(N, piers), pred=lambda v: v == (0, 9))
+    check("  and other directions do", AR._across(N, np.vstack([piers, ray(np.array([20.0, 35, 50, 65, 80, 95]))])), pred=lambda v: v == (6, 15))
+
+    # a chord is a line of a curve only if the curve is one
+    im = np.full((SIZE, SIZE), 40, np.uint8)
+    cv2.polylines(im, [np.array([[80, 760], [360, 520], [700, 450], [940, 560]], np.int32)], False, 200, 3, cv2.LINE_AA)
+    bent = np.clip(cv2.GaussianBlur(im, (0, 0), 0.8) + np.random.default_rng(1).normal(0, 2.0, im.shape), 0, 255).astype(np.uint8)
+    check("long straight edges meeting at small turns are no curve", looked(bent)[1]["curves"], pred=lambda c: c == [])
+    th = np.linspace(np.pi, 0, 90)
+    head = np.c_[500 + 260 * np.cos(th), 500 - 260 * np.sin(th)]
+    door = np.vstack([[[240, 930]], head, [[760, 930]]])
+    im = np.full((SIZE, SIZE), 40, np.uint8)
+    cv2.polylines(im, [np.round(door * 16).astype(np.int32)], False, 200, 3, cv2.LINE_AA, 4)
+    cv2.line(im, (80, 240), (920, 240), 200, 3, cv2.LINE_AA)
+    door = np.clip(cv2.GaussianBlur(im, (0, 0), 0.8) + np.random.default_rng(1).normal(0, 2.0, im.shape), 0, 255).astype(np.uint8)
+    s, got = looked(door)
+    mid = (s[:, :2] + s[:, 2:]) / 2
+    upright = np.abs(s[:, 2] - s[:, 0]) < 3
+    level = np.abs(s[:, 3] - s[:, 1]) < 3
+    check("a curve's chords go", got["chords"].sum(), pred=lambda n: n > 0)
+    check("  its jambs stay", (int(upright.sum()), bool(got["chords"][upright].any())), pred=lambda v: v[0] >= 2 and not v[1])
+    check("  and so does a line that only touches it", (int(level.sum()), bool(got["chords"][level].any())), pred=lambda v: v[0] >= 1 and not v[1])
+
+    rib_arch = {"pts": np.array(next(r for r in R["ribs"] if r["verdict"] == "flat")["pts"]).tolist()}
+    far_arch = {"pts": (np.array(rib_arch["pts"]) + [0, 400]).tolist()}
+    check("an arch that is a sorted rib is not offered twice", AR.beside([rib_arch, far_arch], R["ribs"], 6), pred=lambda v: v == [far_arch])
+    check("  and one left undetermined still is", AR.beside([rib_arch], [{**r, "verdict": "undetermined"} for r in R["ribs"]], 6),
+          pred=lambda v: v == [rib_arch])
+
+    # the point goes on to the families and the guess
+    s, found = looked(gray)
+    kept = s[~found["chords"]]
+    known = np.r_[found["point"], 1.0]
+    fams = V.vps(kept, (SIZE, SIZE), n=4, known=known)
+    check("a known point starts the families", np.hypot(*(fams[0][0][:2] / fams[0][0][2] - N)), pred=lambda e: e < 3)
+    check("  with the lines on it", int(fams[0][1].sum()), pred=lambda n: n >= 5)
+    off = V.vps(kept, (SIZE, SIZE), n=4, known=np.array([5000.0, -5000, 1]))
+    check("  one no line runs to is left out", (len(off), min(int(m.sum()) for _, m in off)), pred=lambda v: v[0] >= 1 and v[1] >= 4)
+
+    def spokes(n):
+        d = np.radians(np.linspace(-45, 45, n))
+        d = np.c_[np.sin(d), -np.cos(d)]
+        return np.c_[N + 700 * d, N + 1100 * d]
+
+    check("five lines do not say which point is the vault's", AR._point(found["curves"], spokes(5), (SIZE, SIZE)), pred=lambda v: v is None)
+    check("  six do", AR._point(found["curves"], spokes(6), (SIZE, SIZE)), pred=lambda v: v is not None and np.hypot(*(v[0] - N)) < 3)
+    stray = [np.array([[400.0, 300.0], [401.0, 320.0]])] * (3 * len(found["curves"]))
+    check("  and not if few of the curves follow it", AR._point(found["curves"] + stray, spokes(8), (SIZE, SIZE)), pred=lambda v: v is None)
+
+    # flat ribs are copies, tipped or not, once the uprights say how the camera is tipped
+    _, leaning, up_tipped, N_tipped = nave(tilt=15)
+    flat_ribs = [q for kind, q in leaning if kind == "flat"]
+    ratios = lambda v: [z[2].max() - z[2][-1] for z in AR._rows(flat_ribs, N_tipped, v)[1]]
+    check("tipped 15 degrees, the flat ribs keep one ratio by the uprights", np.ptp(ratios(up_tipped)), pred=lambda v: v < 0.002)
+    check("  and differ by 3 % without them", np.ptp(ratios(None)), pred=lambda v: v > 0.02)
+
+    W, H = 1000, 1000
+    Nn = np.array([250.0, 1400.0, 1.0])
+    towards = lambda p, deg: np.array([[p[0] + r * np.sin(np.radians(d)), p[1] - r * np.cos(np.radians(d)),
+                                        p[0] + (r + 300) * np.sin(np.radians(d)), p[1] - (r + 300) * np.cos(np.radians(d))]
+                                       for d, r in zip(deg, np.resize([500, 650, 800], len(deg)))])
+    fam = {"up": np.array([[x, 100.0, x, 700.0] for x in np.arange(60, 960, 90)]),
+           "nave": towards(Nn, np.array([-8.0, 2, 12, 22, 32, 42])),
+           "false": towards(np.array([-900.0, 900.0]), np.linspace(35, 85, 18))}
+    vps = {"up": np.array([0, 1.0, 0]), "nave": Nn, "false": np.array([-900.0, 900.0, 1.0])}
+    free = CN.guess(fam, vps, image_size=(W, H))
+    g = CN.guess(fam, vps, image_size=(W, H), along="nave")
+    check("left to itself the guess takes the heaviest family", free["conditioning"].get("take"), pred=lambda t: t and "false" in t)
+    check("the family along the vault is taken however heavy the rest", g["conditioning"].get("take"), pred=lambda t: t and "nave" in t and "false" not in t)
+    check("  and reads 1-point, its point out of the frame", g["value"], pred=lambda v: v == "one")
+    check("  its horizon through that point, px", abs(np.array(g["conditioning"]["horizon"]) @ Nn), pred=lambda e: e < 5)
+    check("  with no lens, for one point gives none", g["conditioning"].get("focal_px"), pred=lambda v: v is None)
+    check("  and no tilt", "tilt_deg" in g["conditioning"], pred=lambda v: not v)
+
+    # the walls of a side aisle, square with the uprights and heavier than the nave
+    aisle = np.array([2100.0, 900.0, 1.0])
+    four, v4 = {**fam, "far": towards(aisle, -np.linspace(35, 85, 18))}, {**vps, "far": aisle}
+    check("left to itself the guess takes three square families", CN.guess(four, v4, image_size=(W, H))["conditioning"]["take"],
+          pred=lambda t: "nave" not in t)
+    check("  and the vault's length over any of them", CN.guess(four, v4, image_size=(W, H), along="nave")["conditioning"]["take"],
+          pred=lambda t: "nave" in t and "false" not in t and "far" not in t)
+    # courses nearly level on the page: 1-point, though a third family could give a lens
+    far = np.array([30000.0, 1400.0, 1.0])
+    y0 = np.arange(150.0, 880, 90)
+    at = np.c_[np.linspace(200, 500, len(y0)), y0]
+    d = far[:2] - at
+    level = np.c_[at, at + 420 * d / np.hypot(*d.T)[:, None]]
+    g3 = CN.guess({"up": fam["up"], "nave": fam["nave"], "level": level}, {"up": vps["up"], "nave": Nn, "level": far}, image_size=(W, H), along="nave")
+    check("a third family gives 1-point no lens", (g3["value"], g3["conditioning"]["focal_px"]), pred=lambda v: v == ("one", None))
+
+    # a family too light for the search, which only its point being known brings in
+    d = np.radians(np.arange(-30.0, 31, 12))
+    d = np.c_[np.sin(d), -np.cos(d)]
+    r = np.array([700.0, 760, 820, 880, 940, 1000])[:, None]
+    light = np.vstack([np.c_[Nn[:2] + r * d, Nn[:2] + (r + 90) * d],
+                       [[x, 40.0, x, 960.0] for x in np.arange(60.0, 960, 90)],
+                       [[40.0, y, 960.0, y + 3] for y in np.arange(60.0, 960, 90)]])
+    check("a family too light to be found", max(int(m[:6].sum()) for _, m in V.vps(light, (SIZE, SIZE), n=4)), pred=lambda n: n < 4)
+    check("  starts the list once its point is known", int(V.vps(light, (SIZE, SIZE), n=4, known=Nn)[0][1][:6].sum()), pred=lambda n: n == 6)
+
+    # stone courses in the webs, two directions of them, read as a pattern would be
+    webs = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    rng = np.random.default_rng(4)
+    for way in ((1.0, 0.28), (1.0, -0.5)):
+        for p in rng.uniform([100, 40], [900, 620], (130, 2)):
+            q = p + 70 * np.array(way) / np.hypot(*way)
+            cv2.line(webs, tuple(np.round(p).astype(int).tolist()), tuple(np.round(q).astype(int).tolist()), (170, 170, 170), 2, cv2.LINE_AA)
+    with tempfile.TemporaryDirectory() as d:
+        path, stone = d + "/vault.png", d + "/stone.png"
+        cv2.imwrite(path, gray)
+        cv2.imwrite(stone, webs)
+        r = A.app.test_client().post("/api/detect", json={"image": path}).get_json()
+        rs = A.app.test_client().post("/api/detect", json={"image": stone}).get_json()
+    check("a vault's stone courses are no pattern on a plane", (rs["ribs"]["verdict"], [q["plane"] for q in rs["patterns"]]),
+          pred=lambda v: v[0] == "sorted" and "ceiling" not in v[1])
+    check("Detect edges sorts the ribs", r["ribs"]["verdict"], pred=lambda v: v == "sorted")
+    seg = np.array(r["segments"])
+    left = np.hypot(*(((seg[:, :2] + seg[:, 2:]) / 2)[:, None] - all_rib[None]).transpose(2, 0, 1)).min(1) < 3
+    left &= V.resid_deg(seg, np.r_[N, 1.0]) >= 0.5
+    check("  and offers few of their chords as lines", int(left.sum()) / int((on_rib & ~through).sum()), pred=lambda v: v < 0.25)
+    first = r["families"][0]
+    check("  the first family runs along the vault, px off", np.hypot(*(np.array(first["vp"]) - N)), pred=lambda e: e < 3)
+
+    # what repeats along a vault, with no pattern assumed
+    def to_it(g, n=None):
+        s, f = looked(g)
+        f = {**f, "point": f["point"] if n is None else n.tolist()}
+        return f, s[V.resid_deg(s, np.r_[f["point"], 1.0]) < 1.5]
+
+    teeth = lambda x, rng: (x, rng.uniform(3, 8, len(x)), np.full(len(x), 40.0))
+    rng = np.random.default_rng(3)
+    got = AR._period(teeth(3 + 1.7 * np.arange(12) + rng.normal(0, 0.05, 12), rng), 6.0)
+    check("teeth a period apart give it", got["p"], 1.7, 0.02)
+    check("  by no chance", got["chance"], pred=lambda c: c < 0.01)
+    wide = AR._period(teeth(3 + 1.7 * np.arange(12), rng), 12.0)
+    check("  and the period, not its half or third", wide["p"], 1.7, 0.02)
+    check("  within a window it is asked in too", AR._period(teeth(3 + 1.7 * np.arange(12), rng), 6.0, (1.5, 1.9))["p"], 1.7, 0.02)
+    ribbed = teeth(np.sort(np.r_[3 + 1.7 * np.arange(12), 3.6 + 1.7 * np.arange(12)]), rng)
+    check("a rib's two edges to each tooth hide it from the first harmonic, and not from three",
+          (AR._power(ribbed, 1.7, 1)[0], AR._power(ribbed, 1.7)[0]), pred=lambda v: v[0] < 8 and v[1] > 30)
+    check("too few teeth say nothing", AR._period(teeth(np.arange(3.0), rng), 6.0), pred=lambda v: v is None)
+    odds = [AR._period(teeth(np.sort(rng.uniform(0, 20, 12)), rng), 6.0)["chance"] for _ in range(300)]
+    check("teeth at random pass a chance of .05 this share of the time", np.mean(np.array(odds) <= 0.05), pred=lambda v: v <= 0.1)
+
+    f7, on7 = to_it(gray7)
+    R7 = AR.read(f7, Vp, gray7, on7)
+    check("flat ribs at every boss: read as what repeats", R7["verdict"], pred=lambda v: v == "repeats")
+    check("  a side's family flat, and none 3D", [F["family"] for F in R7["families"]], pred=lambda v: "flat" in v and "3D" not in v)
+    check("  its bay, of the nearest rib's depth", R7["bay"], DZ / Z0, 0.02)
+    check("  and it says so", R7["says"], pred=lambda v: "1 flat" in v and "chance" in v)
+    check("  each family's own bay and chance", [(F["p"], F["chance"]) for F in R7["families"]], pred=lambda v: all(p > 0 and c <= 0.05 for p, c in v))
+    far = lambda p, ribs: np.percentile(np.hypot(*(np.array(p)[:, None] - np.vstack(ribs)[None]).transpose(2, 0, 1)).min(1), 90)
+    drawn_ribs = [q for _, q in nave(runs=lambda rng: 0.0)[1]]
+    check("  on the ribs drawn, px off at p90", max(far(r["pts"], drawn_ribs) for r in R7["rule"]["ribs"]), pred=lambda e: e < 6)
+    tip, _, up7, N7 = nave(tilt=7, runs=lambda rng: 0.0)
+    ft, ont = to_it(tip, N7)
+    kinds = lambda v: {F["family"] for F in AR.repeats(ft, v, tip, ont)["families"]}
+    check("tipped 7 degrees, the uprights keep flat ribs from being called 3D", kinds(up7), pred=lambda v: "3D" not in v)
+    check("  and without them one is not called either, its run too unsure", kinds(None), pred=lambda v: "3D" not in v)
+    longest = lambda v: max(abs(F["run"]) for F in AR.repeats(ft, v, tip, ont)["families"])
+    check("  the run the uprights leave, against none", (longest(up7), longest(None)), pred=lambda v: v[0] + 0.1 < v[1])
+    gray3, ribs3, _, _ = nave(runs=lambda rng: 0.5)
+    f3, on3 = to_it(gray3)
+    R3 = AR.read(f3, Vp, gray3, on3)
+    check("ribs running half a bay at every boss: another pattern, read", R3["verdict"], pred=lambda v: v == "repeats")
+    check("  3D, and not flat", {F["family"] for F in R3["families"]}, pred=lambda v: "3D" in v and "flat" not in v)
+    check("  half a bay, as near as a run is read", [F["run"] for F in R3["families"] if F["family"] == "3D"][0], pred=lambda v: 0.2 < abs(v) < 0.8)
+    gray2, _, Vp2, N2 = nave(runs=lambda rng: 2.0)
+    f2, on2 = to_it(gray2, N2)
+    check("ribs running two bays are no vault's", AR.repeats(f2, Vp2, gray2, on2), pred=lambda v: v is None or "3D" not in {F["family"] for F in v["families"]})
+    bays = np.cumsum(np.random.default_rng(6).uniform(0.45, 1.55, 14))
+    grayU, *_ = nave(runs=lambda rng: 0.0, at=bays)
+    fU, onU = to_it(grayU, N)
+    check("flat ribs at bays at random: nothing repeats", AR.repeats(fU, Vp, grayU, onU), pred=lambda v: v is None)
+    check("  and the reason says it", AR.read(fU, Vp, grayU, onU)["why"], pred=lambda v: "nothing repeats" in v)
+    check("  bays a little uneven still read", (lambda g: AR.repeats(*(lambda f: (f[0], Vp, g, f[1]))(to_it(g))))(
+        nave(runs=lambda rng: 0.0, at=np.arange(14) + np.random.default_rng(7).uniform(-0.06, 0.06, 14))[0]), pred=lambda v: v is not None)
+    grayF, *_ = nave(gone=set(np.random.default_rng(0).permutation(42)[14:].tolist()))
+    check("a rule with few of its own ribs there is refused", AR.sort(to_it(grayF, N)[0], Vp)["rule"]["why"], pred=lambda v: "found" in v)
+
+    ten = {"a": np.full(9, 0.002), "b": np.full(9, 1e-4), "p": 1.0, "phase": 0.0, "x": np.array([0.0, 8.0]),
+           "spikes": (np.array([1.08, 2.0, 2.93, 4.0]), np.ones(4), np.full(4, 40.0))}
+    check("a copy stands on its tooth, the bays a little uneven", [round(r[2] - 20, 2) for r in AR._family(ten, np.linspace(-20, 20, 9), lambda q: q + 500, (1000, 1000))],
+          pred=lambda v: v == [1.08, 2.0, 2.93, 4.0])
+
+    two = AR.repeats(f7, Vp, gray7, on7[:2])
+    check("two lines do not say how far the point can move", (two["held_px"], {F["family"] for F in two["families"]}), pred=lambda v: v == (None, {"undetermined"}))
+    check("  and it says so", two["says"], pred=lambda v: "Three lines" in v)
+    rng = np.random.default_rng(8)
+    ends = np.array([[100.0, 150.0], [500.0, 80.0], [900.0, 150.0], [950.0, 600.0]])
+    at_it = lambda n, wob: np.c_[ends, ends + 0.6 * (n - ends)] + rng.normal(0, wob, (4, 4))
+    tight = AR.repeats(f7, Vp, gray7, at_it(N, 0.5))
+    check("lines marked to the point keep the flat call", [F["family"] for F in tight["families"]], pred=lambda v: "flat" in v)
+    check("lines that agree exactly still leave the point a spread", AR.repeats(f7, Vp, gray7, at_it(N, 0.0))["held_px"], pred=lambda v: v[0] > 0.1 and v[1] > 0.1)
+    aside = N + [30, 0]
+    loose = AR.repeats({**f7, "point": aside.tolist()}, Vp, gray7, at_it(aside, 6.0))
+    check("a point 30 px aside, its lines loose: no flat rib called 3D", loose and {F["family"] for F in loose["families"]},
+          pred=lambda v: not v or "3D" not in v)
+
+    def arcade(parts, bay, bays, rise):
+        """A corridor looked down at 20 degrees to its axis, a barrel over it and a wall on the right:
+        (picture, uprights' point, its point). A lunette cuts the barrel in each bay, its edges
+        `far` and `near` rising from the piers to meet at mid-bay, and `wall` is an arch's limb
+        standing in the wall. Each edge runs half a bay, and the arches rise `rise`."""
+        a = np.radians(20.0)
+        R = np.array([[np.cos(a), 0, -np.sin(a)], [0, 1, 0], [np.sin(a), 0, np.cos(a)]])
+
+        def page(P):
+            q = P @ R.T
+            return np.c_[500 + 900 * q[:, 0] / q[:, 2], 500 - 900 * q[:, 1] / q[:, 2]]
+
+        t = np.linspace(0, 1, 120)
+        on_barrel = lambda z: np.c_[np.cos(t * np.radians(58)), 0.5 + np.sin(t * np.radians(58)), z]
+        im = np.full((SIZE, SIZE), 40, np.uint8)
+
+        def draw(p):
+            cv2.polylines(im, [np.round(p * 16).astype(np.int32)], False, 200, 3, cv2.LINE_AA, 4)
+
+        for k in range(bays):
+            z = 2.0 + k * bay
+            for name, q in (("far", on_barrel(z + bay - 0.5 * bay * t ** 1.3)), ("near", on_barrel(z + 0.5 * bay * t ** 1.3)),
+                            ("wall", np.c_[np.ones(120), 0.5 + rise * np.sin(t * np.pi / 2), z + bay - 0.5 * bay * (1 - np.cos(t * np.pi / 2))])):
+                if name in parts:
+                    draw(page(q))
+        z = np.array([1.7, 2.0 + (bays + 1) * bay])
+        for X, Y in ((0, 1.5), (1, 0.5), (1, 0.4)):
+            draw(page(np.c_[np.full(2, X), np.full(2, Y), z]))
+        for k in range(0, bays, 2):
+            draw(page(np.c_[np.ones(2), np.array([0.5, -0.1]), np.full(2, 2.0 + k * bay)]))
+        im = cv2.GaussianBlur(im, (0, 0), 0.8)
+        im = np.clip(im + np.random.default_rng(2).normal(0, 2.0, im.shape), 0, 255).astype(np.uint8)
+        at = lambda d: np.array([500 * d[2] + 900 * d[0], 500 * d[2] - 900 * d[1], d[2]])
+        return im, at(R @ [0, 1.0, 0]), at(R @ [0, 0, 1.0])[:2] / at(R @ [0, 0, 1.0])[2]
+
+    def seen(picture, n):
+        s, g = V.lines(cv2.cvtColor(picture, cv2.COLOR_GRAY2BGR), min_len=40, join=0.015)
+        return {**AR.vault(s, g), "point": n.tolist()}, g, s[V.resid_deg(s, np.r_[n, 1.0]) < 1.5]
+
+    grayL, upL, nL = arcade(("far", "near"), 1.5, 8, 0.8)
+    fL, seenL, onL = seen(grayL, nL)
+    RL = AR.repeats(fL, upL, seenL, onL)
+    check("a lunette's two edges: two families at one bay", len(RL["families"]), 2, 0)
+    check("  on one section, running nearly a bay apart", abs(RL["apart"][0]["run"]), 0.9, 0.2)
+    check("  so they are not both flat, and the one that cannot be is 3D", [F["family"] for F in RL["families"]], pred=lambda v: "3D" in v and "flat" not in v)
+    check("  and that is said", RL["says"], pred=lambda v: "not both flat" in v and "comes in" in v)
+    off12 = [AR.repeats({**fL, "point": (nL + d).tolist()}, upL, seenL, onL) for d in ((12, 0), (-12, 0), (0, -12))]
+    check("  with the point 12 px off the two still run apart as far", [abs(m["apart"][0]["run"]) for m in off12], pred=lambda v: max(v) - min(v) < 0.15 and min(v) > 0.7)
+    check("  and with each one's run ruling out the other's being flat, both are 3D", [F["family"] for F in off12[0]["families"]], pred=lambda v: v == ["3D", "3D"])
+    sides = np.array([[900.0, 60.0], [950.0, 500.0], [900.0, 900.0], [600.0, 50.0]])
+    marked = lambda n: np.c_[sides, sides + 0.6 * (n - sides)]
+    grayE, upE, nE = arcade(("wall", "far"), 1.1, 10, 0.42)
+    fE, seenE, _ = seen(grayE, nE)
+    leaves, walled = AR.repeats(fE, upE, seenE, marked(nE))["families"]
+    check("an edge coming off the wall as it rises is 3D, its lean the barrel's", (leaves["family"], leaves["lean"]), pred=lambda v: v[0] == "3D" and 0.6 < v[1] < 0.9)
+    check("an arch's limb in the wall keeps to the wall, and is not called 3D", (walled["family"], walled["lean"]), pred=lambda v: v[0] != "3D" and abs(v[1]) < 0.1)
+    check("a blank picture's noise is not followed", AR._traced(np.clip(np.random.default_rng(1).normal(40, 2, (400, 400)), 0, 255).astype(np.uint8)), pred=lambda v: v == [])
+    check("a corridor's edges are", len(AR._traced(seenL)), pred=lambda n: n >= 12)
+
+    ray = np.linspace(20.0, 70.0, 51)
+    th, n = np.radians(ray), np.full(51, 5)
+    across = 1 / (1 + 0.3 * np.sin(th))
+    check("a rib flat across has no run, whatever its section", AR._sloped(2 * across, across, n, ray), pred=lambda v: abs(v[0]) < 1e-9 and v[1] > 0.5)
+    wall = np.sin(th)
+    check("a rib flat along a wall has no lean, whatever its run", AR._sloped((2 + 0.01 * (ray - 20)) * wall, wall, n, ray), pred=lambda v: abs(v[1]) < 1e-9 and abs(v[0] - 0.5) < 1e-9)
+    check("flat if flat either way, 3D if neither, unsaid if it cannot be told",
+          [AR._called(np.array(v), np.array(o)) for v, o in (((0.0, 0.8), (0.03, 0.05)), ((0.6, 0.02), (0.05, 0.02)), ((0.6, 0.8), (0.05, 0.05)), ((0.6, 0.8), (0.3, 0.05)), ((0.6, 0.8), (np.inf, np.inf)))],
+          pred=lambda v: v == ["flat", "flat", "3D", "undetermined", "undetermined"])
+    one = {"a": 2 * across, "b": across, "p": 1.0, "pos": np.zeros(1)}
+    two = {**one, "a": (2 + 0.01 * (ray - 20)) * across}
+    both = 0.3 * np.cos(th)
+    check("two families on one section part by the difference of their runs", AR._between(two, one, ray)[0], 0.5, 1e-9)
+    check("  and what moves both alike is no part of it", AR._between({**two, "a": two["a"] + both}, {**one, "a": one["a"] + both}, ray)[0], 0.5, 1e-9)
+    check("  on two sections they say nothing", AR._between(two, {**one, "b": 2 * across}, ray), pred=lambda v: v is None)
+    shaky = across * (1 + 0.02 * np.sin(7 * th))
+    check("  and a wobble in a set's b leaves it, however many bays its origin lies from its curves",
+          AR._between({**two, "a": two["a"] - 3 * shaky, "b": shaky, "pos": np.full(1, 3.0)}, {**one, "pos": np.zeros(3)}, ray)[0], 0.5, 1e-9)
+    a, b = 2 * across, across
+    step = (ray - ray.mean()) / ray.std()
+    U = np.array([a, a + b, a + 2 * b, 1 / (1 / (a + b) + 0.016 * step), 1 / (1 / (a + b) + 0.022 * np.sin(np.arange(51.0)))])
+    check("a row as far from a set, its miss a tilt across its rays, has another run; its miss a wobble, it has not",
+          AR._members(U, a, b, 51, 0.02)[0].tolist(), pred=lambda v: v == [True, True, True, False, True])
+
+    bare, *_ = nave(running=False)
+    with tempfile.TemporaryDirectory() as d:
+        path = d + "/bare.png"
+        cv2.imwrite(path, bare)
+        post = lambda **kw: A.app.test_client().post("/api/detect", json={"image": path, **kw})
+        none = post().get_json()
+        check("ribs with no point: told what to mark", none["ribs"]["why"], pred=lambda v: "Mark 3 lines" in v)
+        marks = at_it(N, 0.0).tolist()
+        r = post(along=marks).get_json()
+        check("three lines marked: read about their point, px off", np.hypot(*(np.array(r["ribs"]["point"]) - N)), pred=lambda e: e < 1)
+        check("  as the rule of one with lines of its own", r["ribs"]["verdict"], pred=lambda v: v == "sorted")
+        check("  the guess takes them as the axis", r["guess"]["conditioning"]["place"].get("marked"), pred=lambda v: v in ("wall", "ceiling", "floor", "off"))
+        check("  and does not offer them back", r["guess"]["conditioning"]["take"], pred=lambda v: "marked" not in v)
+        check("a 5-point claim refuses, with the reason", post(along=marks, perspective="five").get_json()["ribs"]["why"],
+              pred=lambda v: "rays bend" in v)
+        check("along that is not lines is refused", post(along=[1, 2, 3]).status_code, 400, 0)
+        cv2.imwrite(path, nave(runs=lambda rng: 0.0, running=False)[0])
+        check("a read from marks counts the marks", post(along=marks).get_json()["ribs"].get("says"), pred=lambda v: v and "with 4 lines" in v)
+        tipped, _, Vt, Nt = nave(tilt=7.0, running=False)
+        cv2.line(tipped, (216, 650), (216, 950), 200, 2, cv2.LINE_AA)       # under the ridge: on a line with the point and its own
+        cv2.imwrite(path, tipped)
+        r = post(along=at_it(Nt, 0.0).tolist()).get_json()
+        c = r["guess"]["conditioning"]
+        check("an upright through the marked point leaves the marks the axis", c.get("place", {}).get("marked"), pred=lambda v: v in ("wall", "ceiling", "floor", "off"))
+        check("  and the uprights the uprights, px off their point in 1000", c.get("vertical") and 1000 * abs(r["families"][int(c["vertical"])]["vp"][1] / (Vt[1] / Vt[2]) - 1),
+              pred=lambda e: e and e < 100)
 
 
 def figure_module():
@@ -4049,6 +4574,514 @@ def five_point():
           pred=lambda v: v == "undetermined")
 
 
+def room_lines(K, Rot, rng, size, n=14, noise=0.0):
+    """A room's lines as a camera at the origin sees them, along x, y and z.
+
+    Every line is in front of the camera and inside the frame, and y is upright.
+    """
+    out = {}
+    for name, d in zip("xyz", np.eye(3)):
+        q = []
+        while len(q) < n:
+            P = Rot.T @ rng.uniform([-4, -4, 5], [4, 4, 12])
+            a, b = K @ (Rot @ P), K @ (Rot @ (P + rng.uniform(1.5, 3.0) * d))
+            if a[2] > 0.5 and b[2] > 0.5:
+                s = np.r_[a[:2] / a[2], b[:2] / b[2]]
+                if (s[[0, 2]] > 0).all() and (s[[1, 3]] > 0).all() and (s[[0, 2]] < size[0]).all() and (s[[1, 3]] < size[1]).all():
+                    q.append(s + rng.normal(0, noise, 4) if noise else s)
+        out[name] = np.array(q)
+    return out, {n: K @ Rot[:, i] for i, n in enumerate("xyz")}
+
+
+def floor_lines(K, Rot, rng, size, d, n=30, y=1.5):
+    """Planks on a floor `y` below the eye, running along world direction `d`."""
+    q = []
+    while len(q) < n:
+        P = np.array([rng.uniform(-9, 9), y, rng.uniform(-9, 9)])
+        a, b = K @ (Rot @ P), K @ (Rot @ (P + rng.uniform(2.5, 5.0) * np.asarray(d, float)))
+        if a[2] > 0.5 and b[2] > 0.5:
+            s = np.r_[a[:2] / a[2], b[:2] / b[2]]
+            if (s[[0, 2]] > 0).all() and (s[[1, 3]] > 0).all() and (s[[0, 2]] < size[0]).all() and (s[[1, 3]] < size[1]).all():
+                q.append(s)
+    return np.array(q)
+
+
+def standing_up():
+    """The type guessed, the camera it stands on, and the picture turned to it."""
+    print("\nstanding a picture up")
+    import tempfile
+    import cv2
+    import app as A
+    from core import consensus as CN
+    W, H = 960.0, 1280.0                      # testdata/1.jpg, which lends its size
+    rng = np.random.default_rng(11)
+
+    def seen(rx, ry, rz, noise=0.0, f=1000.0):
+        Km, Rot = camera(f, (W / 2, H / 2), rx, ry, rz)
+        return (Km, Rot, *room_lines(Km, Rot, rng, (W, H), noise=noise))
+
+    tipped, level, square = (0.2, 0.6, 0.03), (0.0, 0.6, 0.0), (0.0, 0.0, 0.0)
+    for name, turn, want in (("a tipped room", tipped, "three"), ("a level room turned", level, "two"),
+                             ("a room faced square", square, "one")):
+        g = CN.guess(*seen(*turn, noise=0.3)[2:], image_size=(W, H))
+        check(f"{name} reads as {want}-point", g["value"], pred=lambda v, w=want: v == w)
+    # the fit's seeds came out left-handed half the time, and it stopped with
+    # the lens 2.5 x too long
+    for ry in (0.6, -0.6):
+        for rx in (0.2, -0.2):
+            Km, Rot, fam, vps = seen(rx, ry, 0.03, noise=0.3)
+            g = CN.guess(fam, vps, image_size=(W, H))
+            check(f"  lens read from any quarter ({rx:+}, {ry:+}), %",
+                  abs(g["conditioning"]["focal_px"] / 1000 - 1) * 100, pred=lambda e: e < 3)
+    Km, Rot, fam, vps = seen(*tipped, noise=0.3)
+    g = CN.guess(fam, vps, image_size=(W, H))
+    u = Rot[:, 1] if Rot[1, 1] < 0 else -Rot[:, 1]
+    check("  its roll, deg", g["conditioning"]["roll_deg"],
+          float(np.degrees(np.arctan2(u[0], -u[1]))), 0.15)
+    check("  its tip, deg", g["conditioning"]["tilt_deg"], float(np.degrees(np.arcsin(u[2]))), 0.15)
+    check("  the uprights are named", g["conditioning"]["vertical"], pred=lambda n: n == "y")
+    check("  and placed", g["conditioning"]["place"]["y"], pred=lambda p: p == "upright")
+    from scipy.spatial.transform import Rotation
+    rng3 = np.random.default_rng(1)
+    worst = 1.0
+    for _ in range(30):
+        Kr, Rr = camera(rng3.uniform(500, 1800), (W / 2, H / 2), *rng3.uniform([-0.5, -1.2, -0.1], [0.5, 1.2, 0.1]))
+        room = room_lines(Kr, Rr, rng3, (W, H), n=8, noise=0.3)[0]
+        for order in ("xyz", "yxz", "zxy"):
+            worst = min(worst, max(float(np.abs(Rotation.from_rotvec(rv).as_matrix().T @ Rr).max(1).min())
+                                   for _, rv in CN._seeds([room[n] for n in order], W, H)))
+    check("  a seed is the room's own directions, in 30 rooms and any order, worst cos", worst, pred=lambda c: c > 0.95)
+
+    # planks heavier than the uprights, 45 deg to the room
+    plank = {"a": floor_lines(Km, Rot, rng, (W, H), (1, 0, 1)), "b": floor_lines(Km, Rot, rng, (W, H), (1, 0, -1))}
+    g = CN.guess({**fam, **plank}, {**vps, "a": Km @ Rot @ [1, 0, 1.0], "b": Km @ Rot @ [1, 0, -1.0]},
+                 image_size=(W, H))
+    c = g["conditioning"]
+    check("a parquet does not change the reading", g["value"], pred=lambda v: v == "three")
+    check("  it is not taken for the uprights", c["vertical"], pred=lambda n: n == "y")
+    check("  it is placed on the floor", [c["place"]["a"], c["place"]["b"]], pred=lambda p: p == ["floor"] * 2)
+    check("  and it is not what Take adopts", sorted(c["take"]), pred=lambda t: t == ["x", "y", "z"])
+    check("  the lens stays the room's, %", abs(c["focal_px"] / 1000 - 1) * 100, pred=lambda e: e < 3)
+
+    Km, Rot, fam, vps = seen(*level)
+    two = {n: fam[n] for n in "xy"}
+    check("uprights and one wall are not 1-point for lack of a third",
+          CN.guess(two, {n: vps[n] for n in "xy"}, image_size=(W, H))["value"], pred=lambda v: v == "two")
+    got = CN.guess({"y": fam["y"]}, {"y": vps["y"]}, image_size=(W, H))
+    check("one family gives no guess", got["verdict"], pred=lambda v: v == "undetermined")
+
+    Km, Rot, fam, vps = seen(*tipped)
+    s = CN.stand(fam, image_size=(W, H), roles={"y": "vertical"})
+    check("the camera stood on is the one that took it, f", s["K"][0, 0], 1000.0, 1.0)
+    check("  with the center of vision pinned, the quick way", s["pinned"], pred=lambda p: p is True)
+    check("  and y the upright row", np.abs(s["axes"][s["up"]] @ Rot[:, 1]), 1.0, 1e-6)
+    crop = {n: q - [150, 200, 150, 200] for n, q in fam.items()}
+    s = CN.stand(crop, image_size=(W, H), roles={"y": "vertical"})
+    check("a crop breaks the pin and is measured, not assumed", s["pinned"], pred=lambda p: p is False)
+    check("  the same lens, f", s["K"][0, 0], 1000.0, 5.0)
+    check("  the true center of vision", s["K"][:2, 2], np.array([330.0, 440.0]), 5.0)
+
+    cl = A.app.test_client()
+
+    def ask(fam, mode, trim=None, roles=None, **more):
+        return cl.post("/api/upright", json={
+            "image": "testdata/1.jpg", "image_size": [W, H], "mode": mode, "trim": trim,
+            "families": {n: q.tolist() for n, q in fam.items()},
+            "roles": {"y": "vertical"} if roles is None else roles, **more}).get_json()
+
+    def turned(r, fam):
+        T = A._homography(r["trim"], W, H)
+        return {n: RC._apply(T, q.reshape(-1, 2)).reshape(-1, 4) for n, q in fam.items()}
+
+    lean = lambda f: float(np.degrees(np.arctan(np.abs((f["y"][:, 2] - f["y"][:, 0]) / (f["y"][:, 3] - f["y"][:, 1])))).max())
+    flat = lambda q: float(np.degrees(np.arctan(np.abs((q[:, 3] - q[:, 1]) / (q[:, 2] - q[:, 0])))).max())
+
+    def tilt(f):
+        a, b = (V.fit(f[n]) for n in "xz")
+        a, b = a[:2] / a[2], b[:2] / b[2]
+        return float(np.degrees(np.arctan(abs((a[1] - b[1]) / (a[0] - b[0])))))
+
+    r = ask(fam, "three")
+    q = turned(r, fam)
+    check("3-point: the horizon comes level, deg", tilt(q), 0.0, 0.01)
+    check("  and the uprights still meet, deg off vertical", lean(q), pred=lambda d: d > 2)
+    r = ask(fam, "two")
+    q = turned(r, fam)
+    check("2-point: the horizon comes level, deg", tilt(q), 0.0, 0.01)
+    check("  and the uprights parallel, deg", lean(q), 0.0, 0.01)
+    check("  it says how far it turned", r["value"], pred=lambda v: 5 < v < 30)
+    again = ask(q, "two", trim=r["trim"])
+    check("  and a second go finds nothing to do", again["verdict"], pred=lambda v: v == "already 2-point")
+    pts = fam["x"].reshape(-1, 2)
+    fwd = cl.post("/api/retrim", json={"image": "testdata/1.jpg", "from": None, "to": r["trim"],
+                                       "points": pts.tolist()}).get_json()["points"]
+    back = cl.post("/api/retrim", json={"image": "testdata/1.jpg", "from": r["trim"], "to": None,
+                                        "points": fwd}).get_json()["points"]
+    check("  the marks go there and back, px", float(np.abs(np.array(back) - pts).max()), 0.0, 0.05)
+    check("  and land with the picture, px", float(np.abs(np.array(fwd) - q["x"].reshape(-1, 2)).max()), 0.0, 1e-3)
+
+    r = ask(fam, "one")
+    q = turned(r, fam)
+    check("1-point: the uprights parallel, deg", lean(q), 0.0, 0.01)
+    check("  the deepest family runs in, the other across, deg", flat(q["x"]), 0.0, 0.01)
+    r = ask(fam, "one", roles={"y": "vertical", "x": "depth"})
+    check("  or the other way about when asked, deg", flat(turned(r, fam)["z"]), 0.0, 0.01)
+    r = ask(fam, "two")
+    check("  and a turn on from 2-point starts from where the center went",
+          ask(turned(r, fam), "one", trim=r["trim"])["trim"]["note"], pred=lambda n: "where the turn left it" in n)
+    # and Detect edges reads the turned picture from there too
+    px = (W / 2 + 150, H / 2 - 120)
+    Ks, Rs = camera(1000.0, px, *tipped)
+    im = np.full((int(H), int(W)), 235, np.uint8)
+    for q in np.vstack(list(room_lines(Ks, Rs, rng, (W, H), n=30)[0].values())).round().astype(int):
+        cv2.line(im, (int(q[0]), int(q[1])), (int(q[2]), int(q[3])), 30, 2, cv2.LINE_AA)
+    with tempfile.TemporaryDirectory() as td:
+        cv2.imwrite(td + "/turned.png", im)
+        lens = lambda **kw: cl.post("/api/detect", json={"image": td + "/turned.png", **kw}).get_json()["guess"]["conditioning"]["focal_px"]
+        spec = {"corners": [[0, 0], [W, 0], [W, H], [0, H]], "out": [W, H], "pp": list(px)}
+        check("a turned picture's guess starts from where the center went, lens", lens(trim=spec), 1000.0, 20.0)
+        check("  as it would not from the middle of the frame", lens(), pred=lambda f: abs(f - 1000) > 30)
+    Hb = RC.upright(Km, [0, -1, 0], "one", (np.sin(1.4), 0, np.cos(1.4)))
+    Mb, ow, oh = RC.canvas(Hb, Km, np.array([[0, 0], [W, 0], [W, H], [0, H]]), "one", 8000)
+    Tb = Mb @ np.linalg.inv(Hb)
+    check("a corner past 90 deg stops at the reach, at 1:1", Tb[0, 0] / Tb[2, 2], 1.0, 1e-9)
+    check("  and no further, f", max(ow, oh) / 1000, pred=lambda v: v <= 6.01)
+    for tip, why in ((0.5, "drawn in"), (0.7, "refused")):
+        Kp, Rp = camera(1000.0, (W / 2, H / 2), tip, 0.2, 0.1)
+        r = ask(room_lines(Kp, Rp, rng, (W, H), n=8)[0], "one", roles={"y": "vertical", "x": "depth"})
+        if why == "drawn in":
+            check("a frame that would pass behind the camera is drawn in, f", r["conditioning"]["reach_f"], pred=lambda q: q < 3)
+        else:
+            check("  and when none will hold it, it is refused", r.get("why", ""), pred=lambda w: "past the camera" in w)
+
+    Km, Rot, fam, vps = seen(*level)
+    tw = {n: fam[n] for n in "xy"}
+    r = ask(tw, "one")
+    check("two families: a turn the lens decides is refused", r.get("why", ""), pred=lambda w: "lens" in w)
+    c, s = np.cos(0.05), np.sin(0.05)
+    rolled = {n: ((q.reshape(-1, 2) - [W / 2, H / 2]) @ [[c, s], [-s, c]] + [W / 2, H / 2]).reshape(-1, 4)
+              for n, q in tw.items()}
+    check("  a roll is not, it needs no lens, deg", ask(rolled, "two").get("value"), float(np.degrees(0.05)), 0.05)
+    check("5-point is refused", ask(fam, "five")["verdict"], pred=lambda v: v == "undetermined")
+    check("one family is refused", ask({"y": fam["y"]}, "two")["verdict"], pred=lambda v: v == "undetermined")
+    bow = {"x": [[[100, 400], [300, 460], [500, 400]]]}
+    check("a bent line is refused", ask(fam, "two", curves=bow).get("why", ""), pred=lambda w: "bend" in w)
+
+    Km, Rot, fam, vps = seen(*tipped)
+    t = ask(fam, "two")["trim"]
+    rim = RC._apply(A._homography(t, W, H), np.array(t["outline"], float))
+    def on_rim(spec):
+        s = cl.post("/api/detect", json={"image": "testdata/1.jpg", "trim": spec}).get_json()["segments"]
+        return int((~V.not_edge(np.array(s, float), rim)).sum())
+    check("a turned picture's wedges have edges", on_rim({k: v for k, v in t.items() if k != "outline"}), pred=lambda n: n > 0)
+    check("  and Detect edges does not offer them", on_rim(t), 0, 0)
+
+
+def patterns():
+    """A repeat on a plane: laid across it, checked, turned flat, found in the edges."""
+    print("\npatterns on a plane")
+    import tempfile
+    import cv2
+    import app as A
+    from core import export as EX, pattern as PT
+    W, H = 960.0, 1280.0
+    Km, Rot = camera(1000.0, (W / 2, H / 2), 0.3, 0.5, 0.0)
+    t = Rot @ np.array([0.0, 1.5, 0.0])               # a floor 1.5 below the eye
+    e1, e2 = np.eye(3)[0], np.eye(3)[2]
+    at = lambda uv: project(Km, Rot, t, np.asarray(uv, float), e1, e2)
+    l = vanish_line(Km, Rot, [0, 1, 0])
+    o, p, q = at([[2.0, 3.0], [2.4, 3.0], [2.0, 3.3]])
+    uv = lambda a, b: np.array([[2 + 0.4 * i, 3 + 0.3 * j] for i in a for j in b], float)
+
+    Hm = PT.lattice(l, o, p, q)
+    check("one repeat and the vanishing line lay the whole lattice, px",
+          float(np.abs(RC._apply(Hm, np.array([[5.0, 7.0], [-1.0, 2.0]])) - at([[4.0, 5.1], [1.6, 3.6]])).max()),
+          0.0, 1e-6)
+    v = np.cross(l, [1.0, 0.0, -300.0])
+    check("a repeat on the vanishing line is no repeat", PT.lattice(l, o, v[:2] / v[2], q), pred=lambda h: h is None)
+
+    far = at(uv(range(-3, 9), range(-2, 7)))
+    marks = np.vstack([[o, p, q], far[::7]])
+    r = PT.check(l, marks, mark=9.0)
+    check("true corners are even", r["verdict"], pred=lambda v: v == "even")
+    check("  to nothing, px", r["value"], 0.0, 1e-2)
+    check("  in any order, however far out", PT.check(l, np.vstack([[o, p, q], far[::-5]]))["value"], 0.0, 1e-2)
+    noisy = marks + np.random.default_rng(3).normal(0, 1.0, marks.shape)
+    check("a hand's marks are still even", PT.check(l, noisy)["verdict"], pred=lambda v: v == "even")
+    run = at(uv(range(16, 0, -2), [0, 2]))
+    shaky = np.vstack([[o + [1.5, -1], p + [-1.5, 1], q + [1, 1.5]], run])
+    check("  and furthest first are read nearest first", PT.check(l, shaky)["verdict"], pred=lambda v: v == "even")
+    un = at(np.array([[2 + 0.4 * i ** 1.25, 3 + 0.3 * j] for i in range(1, 9) for j in (0, 3)]))
+    r = PT.check(l, np.vstack([[o, p, q], un]))
+    check("a floor that stretches as it goes drifts", r["verdict"], pred=lambda v: v == "drifts")
+    check("three marks test nothing", PT.check(l, [o, p, q])["verdict"], pred=lambda v: v == "undetermined")
+    check("two are not a repeat", PT.check(l, [o, p])["verdict"], pred=lambda v: v == "undetermined")
+    r = PT.check(l, np.vstack([[o, p, q], at(uv(range(2, 7), [0]))]))
+    check("marks along one side say the other is untested", r["conditioning"].get("note", ""),
+          pred=lambda n: "other is not tested" in n)
+    check("  and that they ran along it", r["conditioning"]["spanned"], [6.0, 0.0], 0.1)
+
+    # a repeat's own corners, for each motif that is not a grid
+    def corners(motif, ratio, a, b):
+        return at([[2 + 0.4 * x, 3 + 0.3 * y] for x, y in (PT.steps(motif, ratio) @ np.array([[i, j] for i in a for j in b]).T).T])
+
+    r = PT.check(l, np.vstack([[o, p, q], corners("brick", 4, range(-2, 3), range(-2, 3))]), motif="brick")
+    check("a brick repeat is even as bricks", r["value"], 0.0, 1e-2)
+    r = PT.check(l, np.vstack([[o, p, q], corners("brick", 4, range(-2, 3), range(-2, 3))]), motif="grid", mark=9.0)
+    check("  and not as a grid", r["verdict"], pred=lambda v: v == "drifts")
+    for hand, other in (("herringbone", "mirrored herringbone"), ("mirrored herringbone", "herringbone")):
+        m = np.vstack([[o, p, q], corners(hand, 6, range(-3, 4), range(-1, 2))])
+        check(f"{hand}: the stair climbs its own way", PT.check(l, m, motif=hand, ratio=6)["value"], 0.0, 1e-2)
+        check("  and drifts the other", PT.check(l, m, motif=other, ratio=6)["verdict"], pred=lambda v: v == "drifts")
+
+    def area(q):
+        return 0.5 * abs(q[:, 0] @ np.roll(q[:, 1], -1) - q[:, 1] @ np.roll(q[:, 0], -1))
+
+    def inside(q, P):
+        e = np.roll(q, -1, axis=0) - q
+        c = e[:, 0, None] * (P[:, 1] - q[:, 1, None]) - e[:, 1, None] * (P[:, 0] - q[:, 0, None])
+        return (c >= 0).all(0) | (c <= 0).all(0)
+
+    box = np.array([[37.0, 23.0], [517.0, 23.0], [517.0, 383.0], [37.0, 383.0]])
+    P = np.random.default_rng(4).uniform(box[0] + 1, box[2] - 1, (1500, 2))
+    Hflat = np.diag([60.0, 60.0, 1.0])
+    for motif in PT.MOTIFS:
+        got = PT.tiles(Hflat, motif, 3.0, region=box)
+        polys = [np.array(q) for q in got["polys"]]
+        n = sum(inside(q, P).astype(int) for q in polys)
+        check(f"{motif}: every point under one tile", (int(n.min()), int(n.max())), pred=lambda v: v == (1, 1))
+        check("  and the tiles fill the box, of its area", sum(map(area, polys)) / area(box), 1.0, 1e-3)
+    check("checker shades one in two", np.mean(PT.tiles(Hflat, "checker", region=box)["shaded"]), 0.5, 0.05)
+    got = PT.tiles(Hm, "grid", region=np.array([[0, 0], [W, 0], [W, H], [0, H]]))
+    w = np.array([c for q in got["polys"] for c in q])
+    side = np.sign(l @ [o[0], o[1], 1.0]) * (w @ l[:2] + l[2])
+    check("across a frame with the horizon in it no tile reaches it, px", float(side.min()), pred=lambda d: d > 0)
+    w = np.array([c for q in PT.tiles(Hm, "grid", repeats=30)["polys"] for c in q])
+    check("  nor with no frame, however many repeats, px", float((np.sign(l @ [o[0], o[1], 1.0]) * (w @ l[:2] + l[2])).min()),
+          pred=lambda d: d > 0)
+    check("the far tiles stop before they are grey", len(got["polys"]), pred=lambda n: 100 < n < PT.MAX_TILES)
+    check("a repeat too small for its surface is refused",
+          PT.tiles(np.diag([3.0, 3.0, 1.0]), "grid", region=np.array([[0, 0], [W, 0], [W, H], [0, H]])).get("why", ""),
+          pred=lambda w: "repeats would fit" in w)
+
+    v0 = Km @ Rot @ e1
+    line = lambda v: np.r_[at([[-1.0, v]])[0], at([[2.0, v]])[0]]
+    even = np.array([line(2 + 0.5 * i) for i in range(16)])
+    r = PT.comb(even, v0, l)
+    check("evenly spaced lines comb out", r and r["teeth"], 16, 0)
+    r = PT.comb(np.delete(even, [3, 8, 9, 12], axis=0), v0, l)
+    check("  and a missing line costs nothing", r and (r["teeth"], r["strength"]), pred=lambda v: v == (12, 1.0))
+    sets = [np.random.default_rng(s).uniform(2, 10, 16) for s in range(100)]
+    check("lines at random do not, sets of 100",
+          sum(bool(PT.comb(np.array([line(v) for v in vs]), v0, l)) for vs in sets), pred=lambda n: n <= 2)
+    big = np.array([line(2 + 0.5 * i) for i in range(6)] * 20 + [line(v) for v in np.random.default_rng(6).uniform(2, 10, 30)])
+    check("a line in many pieces is one line", PT.comb(big, v0, l), pred=lambda v: v is None)
+
+    near = at(uv(range(0, 6), range(0, 6)))
+    v1 = Km @ Rot @ e2
+    ends = np.array(PT._span(near, v0, v1))
+    hz = np.cross(v0, v1)
+    high = np.array([[480.0, -(hz[0] * 480.0 + hz[2]) / hz[1] + 12]])
+    check("one line by the horizon does not stretch a patch, px",
+          float(np.abs(np.array(PT._span(np.vstack([near, high]), v0, v1)) - ends).max()), pred=lambda d: d < 25)
+
+    rng = np.random.default_rng(8)
+    Kb, Rb = camera(1000.0, (W / 2, H / 2), 0.2, 0.6, 0.03)
+    fam, vps = room_lines(Kb, Rb, rng, (W, H), noise=0.3)
+    fam.update(a=floor_lines(Kb, Rb, rng, (W, H), (1, 0, 1)), b=floor_lines(Kb, Rb, rng, (W, H), (1, 0, -1)))
+    vps.update(a=Kb @ Rb @ [1, 0, 1.0], b=Kb @ Rb @ [1, 0, -1.0])
+    from core import consensus as CN
+    g = CN.guess(fam, vps, image_size=(W, H))
+    got = PT.found(fam, vps, g, (W, H))
+    check("a parquet is sorted from the room", [(s["plane"], sorted(s["families"])) for s in got],
+          pred=lambda v: v == [("floor", ["a", "b"])])
+    check("  45 deg to it, deg", got[0]["to_room_deg"], 45.0, 2.0)
+    check("  and it agrees with the horizon, deg off", got[0]["off_deg"], pred=lambda d: d < 1.5)
+    check("  all of its lines", got[0]["n"], 60, 0)
+    room = PT.found({n: fam[n] for n in "xyz"}, {n: vps[n] for n in "xyz"},
+                    CN.guess({n: fam[n] for n in "xyz"}, {n: vps[n] for n in "xyz"}, image_size=(W, H)), (W, H))
+    check("a room with none lists none", room, pred=lambda v: v == [])
+
+    cl = A.app.test_client()
+    vp2 = lambda v: (v[:2] / v[2]).tolist()
+    plain = {"image": {"path": "testdata/1.jpg", "w": W, "h": H}, "width": W, "perspective": "three",
+             "vps": {n: vp2(v) for n, v in zip("xyz", (Km @ Rot[:, i] for i in range(3)))}, "vertical_vp": "y"}
+    own = {"S.0": vp2(Km @ Rot @ [1, 0, 1.0]), "S.1": vp2(Km @ Rot @ [1, 0, -1.0])}
+    doc = {**plain, "own_vps": own, "surfaces": {"S": {"name": "floor", "vps": ["S.0", "S.1"]}},
+           "features": {"P": {"kind": "pattern", "surface": "S", "pts": marks[:6].tolist()},
+                        "Q": {"kind": "pattern", "surface": "S", "pts": marks[:2].tolist()}}}
+    r = cl.post("/api/pattern", json={"doc": doc, "feature": "P", "region": [[0, 500], [W, 500], [W, H], [0, H]]}).get_json()
+    check("the page gets the tiles of a surface with its own points", len(r.get("polys", [])), pred=lambda n: n > 20)
+    check("  and how far each mark is off", len(r["moves"]), 6, 0)
+    check("two marks are refused", cl.post("/api/pattern", json={"doc": doc, "feature": "Q"}).status_code, 400, 0)
+    a, b = A._camera(plain), A._camera(doc)
+    check("a pattern's points are nothing to the camera", np.abs(a[1] - b[1]).max(), 0.0, 0.0)
+    r = cl.post("/api/straighten", json={"doc": doc, "surface": "S", "pts": at([[1, 1], [6, 1], [6, 6], [1, 6]]).tolist()})
+    check("a surface with its own points shows flat", (r.status_code, r.mimetype), pred=lambda v: v == (200, "image/png"))
+    q = at([[2, 3], [3, 3], [3, 4], [2, 4]])
+    tri = lambda p: np.sign(np.linalg.det(np.c_[p[:3], np.ones(3)]))
+    v0, v1 = own["S.0"], own["S.1"]
+    blank = np.zeros((int(H), int(W), 3), np.uint8)
+    check("a floor shown flat is no mirror image, whichever point comes first",
+          [tri(RC._apply(RC.straighten(blank, Km, q, a, b)[1], q)) for a, b in ((v0, v1), (v1, v0))],
+          pred=lambda v: v == [tri(q), tri(q)])
+
+    # a wall in a tipped room, claimed 2-point, spanned by its pattern's own points.
+    # The disc is off both diagonals: sideways and mirrored together is a transpose
+    Kw, Rw = camera(1000.0, (W / 2, H / 2), 0.08, 0.6, 0.0)
+    page = lambda u, v: (lambda x: x[:, :2] / x[:, 2:])((Kw @ (Rw @ np.c_[u, v, np.full(len(u), 7.0)].T)).T)
+    th = np.linspace(0, 2 * np.pi, 80)
+    side = page(np.array([-6.0, -2, -2, -6]), np.array([-2.5, -2.5, 1, 1]))
+    im = np.full((int(H), int(W), 3), 40, np.uint8)
+    cv2.fillPoly(im, [np.round(side).astype(np.int32)], (200, 200, 200))
+    cv2.fillPoly(im, [np.round(page(-5 + 0.3 * np.cos(th), -0.2 + 0.3 * np.sin(th))).astype(np.int32)], (0, 0, 255))
+    fam, vs = room_lines(Kw, Rw, np.random.default_rng(5), (W, H))
+    with tempfile.TemporaryDirectory() as td:
+        path = td + "/wall.png"
+        cv2.imwrite(path, im)
+        tipped = {"image": {"path": path, "w": W, "h": H}, "width": W, "perspective": "two",
+                  "vps": {n: vp2(v) for n, v in vs.items()}, "vertical_vp": "y", "horizon_vps": ["x", "z"],
+                  "family_lines": {n: m.tolist() for n, m in fam.items()},
+                  "own_vps": {"W.0": vp2(vs["x"]), "W.1": vp2(vs["y"])},
+                  "surfaces": {"W": {"name": "wall", "vps": ["W.0", "W.1"]}}}
+        ask = lambda **kw: cl.post("/api/straighten", json={"doc": {**tipped, **kw}, "surface": "W", "pts": side.tolist()})
+        r = ask()
+        check("a 1-point claim still turns a wall by the lens its lines measure", ask(perspective="one").status_code, 200, 0)
+        faced = room_lines(*camera(1000.0, (W / 2, H / 2), 0.0, 0.0, 0.0), np.random.default_rng(6), (W, H))[0]
+        no = ask(perspective="one", family_lines={n: m.tolist() for n, m in faced.items()})
+        check("lines that measure no lens are refused, under its own name", (no.status_code, no.get_json()["error"][:9]),
+              pred=lambda v: v == (400, "Show flat"))
+        check("and 5-point has no plane to turn", ask(perspective="five").status_code, 400, 0)
+    flat = cv2.imdecode(np.frombuffer(r.data, np.uint8), 1)
+    my, mx = np.nonzero((flat[..., 2] > 200) & (flat[..., 0] < 90))
+    check("a wall shown flat stands up, the right way round, across its width and down its height",
+          [float(np.median(mx)) / flat.shape[1], float(np.median(my)) / flat.shape[0]],
+          pred=lambda v: abs(v[0] - 0.25) < 0.06 and abs(v[1] - 0.66) < 0.06)
+    check("  and a disc on it comes out round", float(np.ptp(mx)) / float(np.ptp(my)), 1.0, 0.03)
+    Kf = A._flat_camera(tipped, (W, H), None)[1]
+    off_square = lambda Kc: abs(90 - float(np.degrees(np.arccos(
+        RC._unit(np.linalg.solve(Kc, vs["x"])) @ RC._unit(np.linalg.solve(Kc, vs["y"]))))))
+    check("a wall is turned by the lines' own camera, not the claim's: lens", Kf[0, 0], 1000.0, 3.0)
+    check("  and its two directions are square under it, deg", off_square(Kf), 0.0, 0.1)
+    check("  as they are not under the level camera the claim gives, deg", off_square(A._camera(tipped)[1]), pred=lambda d: d > 2)
+    ck = cl.post("/api/check", json={"doc": doc}).get_json()["results"]
+    check("Check reads a pattern on its surface", ck["P"]["verdict"], pred=lambda v: v == "even")
+    check("  and says when it is short of marks", ck["Q"]["verdict"], pred=lambda v: v == "undetermined")
+    layer = {"kind": "pattern", "name": "p", "color": "#2ca8ff", "hidden": False, "lines": [], "pts": [[100.0, 100.0]],
+             "far": [], "pairs": [], "vp": None, "shaded": [False, True]}
+    pdf = lambda L: len(EX.pdf({"w": 1000, "h": 800, "layers": [L]}, None))
+    tile = [[[10, 10], [200, 10], [200, 200]], [[300, 300], [500, 300], [500, 500]]]
+    check("the tiles go out in the PDF", (pdf({**layer, "polys": tile}), pdf(layer)), pred=lambda v: v[0] > v[1])
+
+
+def arches_found():
+    """Arches among the edges, found by turning, not by being told where."""
+    print("\narches among the edges")
+    import tempfile
+    import cv2
+    import app as A
+    from core import arches as AR
+    W, H = 960, 1280
+    Km, Rot = camera(1000.0, (W / 2, H / 2), 0.08, 0.6, 0.0)
+    up, vx, vz = Km @ Rot[:, 1], Km @ Rot[:, 0], Km @ Rot[:, 2]
+    # a wall 7 ahead of the eye and square to z, which a camera turned 0.6 sees running to vx
+    page = lambda P: (lambda q: q[:, :2] / q[:, 2:])((Km @ (Rot @ np.asarray(P, float).T)).T)
+    wall = lambda u, v: np.c_[u, v, np.full(len(u), 7.0)]
+
+    def opening(r=1.2, cx=-4.0, spring=-0.6, sill=1.0, n=120, th=(np.pi, 0)):
+        a = np.linspace(th[0], th[1], n)
+        rim = wall(cx + r * np.cos(a), spring - r * np.abs(np.sin(a)))
+        return rim, wall(np.array([cx + r, cx - r]), np.array([sill, sill]))
+
+    def picture(*shapes, size=(H, W)):
+        im = np.full(size, 205, np.uint8)
+        for poly, shade in shapes:
+            cv2.fillPoly(im, [np.round(poly * 16).astype(np.int32)], int(shade), cv2.LINE_AA, 4)
+        im = cv2.GaussianBlur(im, (0, 0), 0.8)
+        n = np.random.default_rng(2).normal(0, 2.0, im.shape)
+        return np.clip(im + n, 0, 255).astype(np.uint8)
+
+    def head(r, ripple=0.0, k=9, size=(H, W)):
+        """A round head seen square on, with its jambs, rippled k times across."""
+        a = np.linspace(np.pi, 0, 300)
+        rr = r + ripple * np.sin(k * 2 * (np.pi - a))
+        x, y = size[1] / 2 + rr * np.cos(a), size[0] / 2 - rr * np.sin(a)
+        return np.vstack([np.c_[x, y], [x[-1], y[-1] + 200], [x[0], y[0] + 200]])
+
+    rim, sill = opening()
+    p3, ps = page(rim), page(sill)
+    check("the rim and its jambs are in the frame", (float(p3.min()), float(p3[:, 0].max())),
+          pred=lambda v: v[0] > 0 and v[1] < W)
+    got = AR.find(picture((np.vstack([p3, ps]), 80)))
+    check("an arch with its jambs is found once", len(got), 1, 0)
+    a = got[0]
+    check("  it turns all the way over, deg", a["turn_deg"], pred=lambda t: t > 150)
+    big = (3200, 2400)
+    check("on a big picture a small arch is not offered", AR.find(picture((head(60, size=big), 80), size=big)), pred=lambda g: g == [])
+    check("  and a twentieth of it across is", len(AR.find(picture((head(110, size=big), 80), size=big))), 1, 0)
+    check("a rim rippled a few px is ornament", [AR.find(picture((head(220, a, 5), 80))) for a in (2.0, 3.0, 4.0)],
+          pred=lambda g: g == [[], [], []])
+    check("a rim smooth for too little of its turn is no curve", AR.find(picture((head(180, 1.3, 16), 80))), pred=lambda g: g == [])
+    d = np.hypot(*(np.array(a["pts"])[:, None] - p3[None]).transpose(2, 0, 1)).min(1)
+    jamb = np.hypot(*(ps[0] - p3[-1]))
+    check("  the jambs are left off, of one, px past the rim", (float(d.max()), jamb), pred=lambda v: v[0] < v[1] / 4)
+    check("  it fits a smooth curve, px", a["rms_px"], pred=lambda e: e < 1)
+    s = R.arch_shape(a["pts"], Km, up[:2] / up[2], vx[:2] / vx[2])
+    check("  and reads as the semicircle it is, rise/span", s["rise_over_span"], 0.5, 0.03)
+    check("it stands in the wall its horizontals run to", AR.wall(a, up, {"near": vx, "far": vz}), pred=lambda n: n == "near")
+    check("  whichever name that wall has", AR.wall(a, up, {"near": vz, "far": vx}), pred=lambda n: n == "far")
+    check("  alone, its own wall is still named", AR.wall(a, up, {"w": vx}), pred=lambda n: n == "w")
+    check("  a wall it is not in is not", AR.wall(a, up, {"w": vz}), pred=lambda n: n is None)
+    check("two walls it could be in are left to the hand", AR.wall(a, up, {"p": vx, "q": vx * [1.0005, 1.0, 1.0]}), pred=lambda n: n is None)
+    check("too little of a curve to say is left too", AR.wall({**a, "turn_deg": 100.0}, up, {"near": vx, "far": vz}), pred=lambda n: n is None)
+
+    band, _ = opening(r=1.2 + 0.04)
+    outer = np.vstack([page(band), ps])
+    got = AR.find(picture((outer, 60), (np.vstack([p3, ps]), 205)))
+    check("both sides of a molding are one arch", len(got), 1, 0)
+    down = np.c_[p3[:, 0], 2 * p3[:, 1].max() - p3[:, 1]]
+    check("a bowl is no arch", AR.find(picture((down, 80))), pred=lambda v: v == [])
+    small = (p3 - p3.mean(0)) * 0.2 + [480, 400]
+    check("nor one too small to matter", AR.find(picture((small, 80))), pred=lambda v: v == [])
+    door = np.array([[300.0, 300], [640, 300], [640, 900], [300, 900]])
+    check("a door is straight", AR.find(picture((door, 80))), pred=lambda v: v == [])
+    th = np.radians(np.arange(0, 360, 45) + 22.5)
+    check("an octagon has corners", AR.find(picture((np.c_[480 + 240 * np.cos(th), 640 + 240 * np.sin(th)], 80))),
+          pred=lambda v: v == [])
+    check("a blank wall holds none", AR.find(picture()), pred=lambda v: v == [])
+    check("a picture with no edges at all is an empty list", AR.find(np.full((64, 64), 128, np.uint8)), pred=lambda v: v == [])
+
+    # the whole way: a wall and a wall, drawn, then asked of the page's own detector
+    im = np.full((H, W, 3), 214, np.uint8)
+    def draw(P, Q):
+        a, b = page(P), page(Q)
+        for s, e in zip(a, b):
+            cv2.line(im, tuple(np.round(s * 16).astype(int)), tuple(np.round(e * 16).astype(int)), (60, 60, 60), 2, cv2.LINE_AA, 4)
+    ys = np.arange(-3.4, 2.3, 0.45)
+    draw(wall(np.full_like(ys, -7.0), ys), wall(np.full_like(ys, 0.0), ys))                 # courses, wall 1
+    us = np.arange(-7.0, 0.0, 0.55)
+    draw(wall(us, np.full_like(us, -3.4)), wall(us, np.full_like(us, 2.2)))                 # uprights
+    other = lambda x, y, z: np.c_[np.full_like(z + y, x), y + 0 * z, z + 0 * y]             # wall 2, at x = -7
+    draw(other(-7.0, ys, 7.0), other(-7.0, ys, 1.0))
+    zu = np.arange(1.5, 7.0, 0.5)
+    draw(other(-7.0, -3.4, zu), other(-7.0, 2.2, zu))
+    cv2.fillPoly(im, [np.round(np.vstack([p3, ps]) * 16).astype(np.int32)], (250, 250, 250), cv2.LINE_AA, 4)
+    cv2.polylines(im, [np.round(np.vstack([p3, ps]) * 16).astype(np.int32)], False, (40, 40, 40), 3, cv2.LINE_AA, 4)
+    with tempfile.TemporaryDirectory() as d:
+        path = d + "/wall.png"
+        cv2.imwrite(path, im)
+        r = A.app.test_client().post("/api/detect", json={"image": path}).get_json()
+    fams = r["families"]
+    arcs = r["arches"]
+    check("Detect edges offers the arch", len(arcs), pred=lambda n: n >= 1)
+    a = max(arcs, key=lambda q: q["turn_deg"])
+    check("  it turns far enough to be read, deg", a["turn_deg"], pred=lambda t: t >= 120)
+    near = int(a.get("wall") or -1)
+    v = fams[near]["vp"] if near >= 0 else None
+    check("  and it is named to its own wall, px from the wall's point", None if v is None else float(np.hypot(*(np.array(v) - vx[:2] / vx[2]))),
+          pred=lambda e: e is not None and e < 60)
+
+
 def main():
     print(__doc__.splitlines()[0])
     conic_fits()
@@ -4084,6 +5117,10 @@ def main():
     conditioning_refuses()
     short_segment_guard()
     detection()
+    standing_up()
+    patterns()
+    arches_found()
+    vault_ribs()
     figure_module()
     trim_module()
     trim_on_photographs()

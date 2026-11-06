@@ -83,6 +83,7 @@ main { height: calc(100vh - 41px); }
 .num { width: 4.2em; }
 #candHost .row { margin-top: 4px; }
 #candHost .why { margin: 2px 0 6px 0; }
+#candHost .guess { margin: 2px 0 8px 0; }
 /* labkit gives a number field its label's whole width, which put each
    setting's unit on a line of its own */
 #detOpts label { display: inline-flex; align-items: center; gap: 4px; }

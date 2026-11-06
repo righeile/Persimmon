@@ -31,6 +31,7 @@ import cv2
 import numpy as np
 from flask import Flask, jsonify, request, send_file, send_from_directory
 
+from core import arches as AR
 from core import camera_io as CIO
 from core import checks as C
 from core import consensus as K
@@ -40,6 +41,7 @@ from core import curvi as CV
 # 9 px under-flags every scan bigger than the one it was measured on.
 from core.consensus import _mark_px as _mark_accuracy
 from core import export as EX
+from core import pattern as PT
 from core import rectify as RC
 from core import rhythm as R
 from core import trim as TR
@@ -193,7 +195,11 @@ def _trim(spec):
         raise ValueError("a trim needs exactly four corners")
     out = spec.get("out")
     return {"corners": q, "out": (None if not out else
-                                  (int(out[0]), int(out[1])))}
+                                  (int(out[0]), int(out[1]))),
+            # a straightened picture's: what it says of itself, where its centre
+            # of vision went, and the edge of what it was turned from
+            "note": spec.get("note"), "pp": spec.get("pp"),
+            "outline": _pts(spec["outline"]) if spec.get("outline") else None}
 
 
 def _load(path, spec):
@@ -223,11 +229,13 @@ def _load(path, spec):
         ow, oh = t["out"]
     if not (0 < ow <= MAX_SIDE and 0 < oh <= MAX_SIDE):
         raise ValueError(f"a trim to {ow}x{oh} is not a usable size")
-    return TR.warp(im, t["corners"], (ow, oh)), {
-        "out": [int(ow), int(oh)], "photo_focal_px": None if f is None else round(f, 1),
-        "keystone": why or ("The keystone has been undone: the sheet's "
-                            "opposite edges converged in the photograph, so "
-                            "it was shot off-axis."),
+    turned = t["outline"] is not None
+    return TR.warp(im, t["corners"], (ow, oh), ordered=turned), {
+        "out": [int(ow), int(oh)],
+        "photo_focal_px": None if f is None or turned else round(f, 1),
+        "keystone": t["note"] if turned else why or (
+            "The keystone has been undone: the sheet's opposite edges converged "
+            "in the photograph, so it was shot off-axis."),
     }
 
 
@@ -331,7 +339,8 @@ def detect():
     its point), `merge_deg` (0 merges nothing), `floor` (picture diagonals
     of line a family must hold) and `join_pct` (the widest gap joined, in
     % of the diagonal; 0 joins nothing). Left out, each is the measured
-    default.
+    default. `along` is a marked family's lines, which give a vault's point
+    when none is found, and `perspective` the type the page claims.
     """
     b = _body()
     try:
@@ -344,6 +353,10 @@ def detect():
     except (TypeError, ValueError):
         return _err("min_len, tol, merge_deg, floor and join_pct are numbers")
     try:
+        marked = None if not b.get("along") else np.array(b["along"], float).reshape(-1, 4)
+    except (TypeError, ValueError):
+        return _err("along is a list of lines, each x1, y1, x2, y2")
+    try:
         im, _ = _load(p, b.get("trim"))
     except (ValueError, json.JSONDecodeError) as exc:
         return _err(str(exc))
@@ -351,10 +364,23 @@ def detect():
     # vanishing-point families and they are the straightest lines in the frame
     s, gray = V.lines(im, min_len=min_len, join=join_pct / 100)
     ih, iw = gray.shape[:2]
+    # a straightened picture's wedges have the longest straight edges in it
+    t = _trim(b.get("trim"))
+    if t and t["outline"] is not None and len(s):
+        s = s[V.not_edge(s, RC._apply(_homography(b.get("trim"), 0, 0), t["outline"]))]
+    arcs = AR.find(gray)
+    found = AR.vault(s, gray)
+    s = s[~found["chords"]]            # a curve's chords are no lines, and they would make families
+    axis = V.fit(marked) if marked is not None and len(marked) >= 2 else np.zeros(3)
+    if abs(axis[2]) > 1e-12:           # what the user marked outranks what was found
+        found.update(point=(axis[:2] / axis[2]).tolist(), rms_px=None, lines=len(marked))
+    else:
+        marked = None
     if not len(s):
-        return jsonify({"segments": [], "families": [],
+        return jsonify({"segments": [], "families": [], "arches": arcs,
                         "note": "no line segments found at this minimum length"})
-    fams = V.vps(s, (ih, iw), n=int(b.get("n", 6)), tol=tol, floor=floor)
+    known = None if found["point"] is None else np.r_[found["point"], 1.0]
+    fams = V.vps(s, (ih, iw), n=int(b.get("n", 6)), tol=tol, floor=floor, known=known)
     merged = V.merge(s, fams, (ih, iw), tol=tol, apart=merge_deg)
     out = []
     for v, m in merged:
@@ -371,8 +397,30 @@ def detect():
                     # size -- see V.short_for_vp
                     "short_segment_warning": V.short_for_vp(
                         float(np.median(L)), pt, iw, ih)})
-    return jsonify({"segments": s.tolist(), "families": out,
-                    "merged_from": len(fams)})
+    fam = {str(i): s[m] for i, (v, m) in enumerate(merged)}
+    vp = {str(i): v for i, (v, m) in enumerate(merged)}
+    on = np.zeros(len(s), bool) if known is None else V.resid_deg(s, known) < tol
+    # most of what runs there, and most of it does: uprights near the ridge run through the point as well
+    along = next((str(i) for i, (v, m) in enumerate(merged) if (m & on).sum() * 2 > max(on.sum(), m.sum())), None)
+    if marked is not None and along is None:     # no line found runs there, and the marks say it is the axis
+        along, fam["marked"], vp["marked"] = "marked", marked, axis
+    g = K.guess(fam, vp, image_size=(iw, ih), pp=t and t["pp"], along=along)
+    # a vault's ceiling is curved, so the stone courses across it lie in no one plane
+    pats = [q for q in PT.found(fam, vp, g, (iw, ih), pp=t and t["pp"]) if known is None or q["plane"] != "ceiling"]
+    for q in pats:
+        q["segs"] = [c for n, i in q.pop("lines").items() for c in fam[n][i].tolist()]
+    c = g.get("conditioning") or {}
+    c["take"] = [n for n in c.get("take", []) if n != "marked"]     # the page has that one
+    if c.get("vertical"):
+        walls = {n: vp[n] for n in c["take"] if c["place"].get(n) == "wall"}
+        for a in arcs:
+            a["wall"] = AR.wall(a, vp[c["vertical"]], walls)
+    ribs = AR.read(found, vp[c["vertical"]] if c.get("vertical") else None, gray,
+                   s[on] if marked is None else marked, b.get("perspective"))
+    if ribs:
+        arcs = AR.beside(arcs, ribs["ribs"], AR.MOLDING * found["diag"])
+    return jsonify({"segments": s.tolist(), "families": out, "merged_from": len(fams),
+                    "guess": g, "patterns": pats, "arches": arcs, "ribs": ribs})
 
 
 def _homography(spec, w, h):
@@ -380,10 +428,8 @@ def _homography(spec, w, h):
     t = _trim(spec)
     if t is None:
         return None
-    ow, oh, _f, _why = TR.shape_of(t["corners"], w, h)
-    if t["out"]:
-        ow, oh = t["out"]
-    q = TR._order(t["corners"]).astype(np.float32)
+    ow, oh = t["out"] or TR.shape_of(t["corners"], w, h)[:2]
+    q = (t["corners"] if t["outline"] is not None else TR._order(t["corners"])).astype(np.float32)
     dst = np.array([[0, 0], [ow - 1, 0], [ow - 1, oh - 1], [0, oh - 1]], np.float32)
     return cv2.getPerspectiveTransform(q, dst)
 
@@ -537,16 +583,7 @@ def fit_vp():
     # of the draws give no camera at all, and the same three arch marks read a
     # rise over span of 0.26 at one end of that range and 2.4 at the other.
     jit = float(tid.get("worst") or 0.0) if tid else 0.0
-    boot = []
-    if len(s) >= 3:
-        rng = np.random.default_rng(0)
-        for _ in range(200):
-            k = rng.integers(0, len(s), len(s))
-            if len(np.unique(k)) < 2:
-                continue
-            w = V.fit(s[k] + rng.normal(0.0, jit, (len(k), 4)) if jit else s[k])
-            if abs(w[2]) > 1e-12:
-                boot.append(w[:2] / w[2])
+    boot = V.drawn(s, jit)
     pt = (v[:2] / v[2]).tolist() if abs(v[2]) > 1e-12 else None
     move, stray = V.strays(s, v, mark)
     cond = {"n_lines": len(s), "median_len_px": float(np.median(L)),
@@ -1364,6 +1401,17 @@ def _camera(doc):
     return got, np.asarray(got["conditioning"].get("K") or got["value"])
 
 
+def _plane_vps(doc):
+    """Every vanishing point a plane can name.
+
+    A surface read off a pattern has two of its own. They stay out of doc["vps"],
+    which is what the camera is solved from: a parquet's directions are not the
+    room's, and a surface says nothing about the lens.
+    """
+    return {k: _xy(v) for src in ("vps", "own_vps")
+            for k, v in (doc.get(src) or {}).items() if v is not None}
+
+
 def _surface_vps(doc, surface_id, ground=False):
     """The two vanishing points that span a surface, as ids, or a refusal.
 
@@ -1382,7 +1430,7 @@ def _surface_vps(doc, surface_id, ground=False):
         if not ground:
             return None, "this feature has no surface label, and no plane is assumed"
         surf, surface_id = {"name": "the ground", "level": True}, None
-    vps = {k: _xy(v) for k, v in (doc.get("vps") or {}).items() if v is not None}
+    vps = _plane_vps(doc)
     name = "the ground" if surface_id is None else f"surface '{surf.get('name', surface_id)}'"
     if surf.get("level"):
         # A plane parallel to the ground shares the ground's vanishing line,
@@ -1417,13 +1465,24 @@ def _vanish_line(doc, surface_id, ground=False):
     ids, why = _surface_vps(doc, surface_id, ground=ground)
     if ids is None:
         return None, why
-    vps = {k: _xy(v) for k, v in (doc.get("vps") or {}).items() if v is not None}
+    vps = _plane_vps(doc)
     a, b = (np.append(vps[i], 1.0) for i in ids)
     l = np.cross(a, b)
     n = np.linalg.norm(l)
     if n < 1e-12:
         return None, "the surface's two vanishing points coincide"
     return l / n, None
+
+
+def _pattern_check(doc, feat, l, keep=False):
+    """`PT.check` on a pattern layer. The fit it carries is for drawing, not for the card."""
+    im = doc.get("image") or {}
+    out = PT.check(l, _pts(feat.get("pts") or []), motif=feat.get("motif") or "grid",
+                   ratio=float(feat.get("ratio") or 4.0),
+                   mark=_mark_accuracy([doc.get("width") or im.get("w") or 1000,
+                                        doc.get("height") or im.get("h") or 1000])[0])
+    return out if keep else {**out, "conditioning": {k: v for k, v in out["conditioning"].items()
+                                                     if k not in ("H", "moves")}}
 
 
 def _run_one(doc, feat, K, Ks):
@@ -1484,6 +1543,12 @@ def _run_one(doc, feat, K, Ks):
                     "this was read against the horizon and not against lines marked "
                     "on the plane itself. Nothing here measures whether it is level.")
             return out
+
+        if kind == "pattern":
+            l, why = _vanish_line(doc, sid)
+            if l is None:
+                return C.undetermined(why, marks=len(feat.get("pts") or []))
+            return _pattern_check(doc, feat, l)
 
         if kind == "arch":
             vps = {k: _xy(v) for k, v in (doc.get("vps") or {}).items() if v is not None}
@@ -1707,6 +1772,24 @@ def export_pdf():
                      as_attachment=True, download_name=name)
 
 
+def _flat_camera(doc, size, trim):
+    """The camera a plane is turned to face us by: (readout, K).
+
+    A shape seen square on is a fact about the room, not about the claim, so it
+    is the camera Straighten stands the picture on when the lines measure a
+    lens. A two-point camera is level by decree, and in a tipped room the wall's
+    own upright then lands 2.8 deg off square to its courses.
+    """
+    cam, Kc = _camera(doc)
+    fam = {k: np.asarray(v, float).reshape(-1, 4)
+           for k, v in (doc.get("family_lines") or {}).items() if len(v)}
+    if doc.get("perspective") == "five" or len(fam) < 2:
+        return cam, Kc
+    s = K.stand(fam, image_size=size, roles={doc.get("vertical_vp"): "vertical"},
+                pp=trim and trim["pp"])
+    return (s["fit"], s["K"]) if s["K"] is not None and s["measured"] else (cam, Kc)
+
+
 @app.post("/api/straighten")
 def straighten():
     """The marked shape, seen as if the plane it lies in faced us.
@@ -1718,26 +1801,30 @@ def straighten():
     b = _body()
     doc = b.get("doc") or {}
     feat = (doc.get("features") or {}).get(b.get("feature")) or {}
-    pts = feat.get("pts") or []
+    pts = b.get("pts") or feat.get("pts") or []         # a surface is its own outline
     if len(pts) < 3:
         return _err("put at least three points around the thing to straighten")
-    ids, why = _surface_vps(doc, feat.get("surface"))
+    ids, why = _surface_vps(doc, b.get("surface") or feat.get("surface"))
     if ids is None:
         return _err(why)
-    vps = {k: _xy(v) for k, v in (doc.get("vps") or {}).items() if v is not None}
-    cam, K = _camera(doc)
-    if K is None:
-        return _err("straightening needs the camera: " + (cam.get("why") or
-                    "three mutually perpendicular vanishing points"))
-    # whichever of the two spanning directions is the vertical one stands up
-    # in the view; on a floor neither is, and any turn in the plane will do
-    up = vps.get(doc.get("vertical_vp")) if doc.get("vertical_vp") in ids else None
+    vps = _plane_vps(doc)
+    trim = b.get("trim") or doc.get("trim")
     try:
-        im, _t = _load(_resolve((doc.get("image") or {}).get("path") or ""),
-                       b.get("trim") or doc.get("trim"))
+        im, _t = _load(_resolve((doc.get("image") or {}).get("path") or ""), trim)
+        cam, Kc = _flat_camera(doc, im.shape[1::-1], _trim(trim))
     except (ValueError, json.JSONDecodeError, TypeError) as exc:
         return _err(str(exc))
-    out, _M = RC.straighten(im, K, np.asarray(pts, float).reshape(-1, 2),
+    if Kc is None:
+        return _err("Show flat needs the camera: " + (cam.get("why") or
+                    "three mutually perpendicular vanishing points"))
+    # a wall stands up in the view. Its pattern names its own two directions, so
+    # the uprights are found by direction and not by name; on a floor they stand
+    # square to the plane, and any turn in it will do
+    v = vps.get(doc.get("vertical_vp"))
+    F = RC.frame(Kc, vps[ids[0]], vps[ids[1]])
+    up = v if v is not None and F is not None and abs(
+        F[2] @ RC._unit(np.linalg.solve(Kc, [v[0], v[1], 1.0]))) < 0.9 else None
+    out, _M = RC.straighten(im, Kc, np.asarray(pts, float).reshape(-1, 2),
                             vps[ids[0]], vps[ids[1]], vp_up=up)
     if out is None:
         return _err("this plane cannot be turned to face us from where the "
@@ -1746,6 +1833,36 @@ def straighten():
     if not ok:
         return _err("could not encode the straightened view")
     return send_file(io.BytesIO(buf.tobytes()), mimetype="image/png")
+
+
+@app.post("/api/pattern")
+def pattern():
+    """The repeat laid across its plane, as it falls on the page.
+
+    The plane is the ground unless the feature names a surface, for the reason
+    an ellipse's is: it is drawn, and a pattern lying on the wrong plane shows.
+    With marks past the repeat it is the even repeat they fit best, and
+    `moves` says how far each is from it.
+    """
+    b = _body()
+    doc = b.get("doc") or {}
+    feat = (doc.get("features") or {}).get(b.get("feature")) or {}
+    l, why = _vanish_line(doc, feat.get("surface"), ground=True)
+    if l is None:
+        return _err(why)
+    pts = _pts(feat.get("pts") or [])
+    if len(pts) < 3:
+        return _err("a repeat is three marks: a corner, and the next one along each side")
+    got = _pattern_check(doc, feat, l, keep=True)
+    c = got["conditioning"]
+    H = c.get("H")
+    if H is None:
+        H = PT.lattice(l, *pts[:3])
+    if H is None:
+        return _err("the repeat lies along the plane's vanishing line")
+    return jsonify({**PT.tiles(H, feat.get("motif") or "grid", float(feat.get("ratio") or 4.0),
+                               region=b.get("region")),
+                    "moves": c.get("moves") or []})
 
 
 @app.post("/api/ellipse")
@@ -2194,6 +2311,116 @@ def _reference(b, size):
     return CIO.fit_to(ref, size[0], size[1]) if size else ref
 
 
+@app.post("/api/upright")
+def upright():
+    """The picture stood up as the selected perspective says it should be.
+
+    Turning a camera about its own centre moves nothing in the scene, so the
+    new picture is a homography of the old and needs no depth. That makes it
+    one more trim: four corners in the original photograph and a size, so
+    `_load`, undo, the marks file and the PDF all carry it, `/api/retrim` moves
+    the marks with it, and the user's file is never rewritten.
+
+    The fit is always three-point, whatever is selected: it says where the
+    camera stood, and the selection says where it should have. The uprights
+    come out parallel and the horizon level whatever the lens, which only sets
+    how far the corners stretch; so a roll, which is all three-point asks, is
+    made even when the lens cannot be measured.
+    """
+    b = _body()
+    try:
+        p = _resolve(b.get("image", ""))
+    except ValueError as exc:
+        return _err(str(exc), 404)
+    try:
+        fam, curves, size, mode, roles = _families(b)
+        spec = b.get("trim")
+        t = _trim(spec)
+    except (ValueError, TypeError, IndexError, json.JSONDecodeError) as exc:
+        return _err(str(exc))
+    im = cv2.imread(str(p))
+    if im is None or not size:
+        return _err("that file did not decode as an image, or no image_size came with it")
+    if mode == "five":
+        return jsonify(C.undetermined(
+            "5-point draws straight edges as arcs on purpose, and no turn of a "
+            "camera undoes that. Select 1-, 2- or 3-point"))
+    bent, worst, mark = _chords(fam, curves, size)
+    if bent:
+        return jsonify(C.undetermined(_bent_why(bent, worst, mark)))
+    fam = {k: v for k, v in fam.items() if len(v)}
+    if len(fam) < 2:
+        return jsonify(C.undetermined(
+            "two line families at least: uprights and one horizontal, or two "
+            "horizontals. Detect edges and Take the guess, or mark them"))
+    s = K.stand(fam, image_size=size, roles=roles, pp=t and t["pp"])
+    if s["K"] is None:
+        return jsonify(C.undetermined(s["fit"].get("why") or "the lines give no camera"))
+    Kc, A, c = s["K"], s["axes"], s["fit"]["conditioning"]
+    up = -A[s["up"]] if A[s["up"]][1] > 0 else A[s["up"]]
+    depth = None
+    if mode == "one":
+        faces = [n for n, r in (roles or {}).items() if r == "depth" and n in c["per_family"]]
+        i = (c["per_family"][faces[0]]["axis_index"] if faces else
+             max((i for i in range(3) if i != s["up"]), key=lambda i: abs(A[i][2])))
+        depth = -A[i] if A[i][2] < 0 else A[i]
+    H = RC.upright(Kc, up, mode, depth)
+    if H is None:
+        return jsonify(C.undetermined(
+            "the camera looks along the upright, so there is no level to stand "
+            "it on", mode=mode))
+
+    h0, w0 = im.shape[:2]
+    outline = (t["outline"] if t and t["outline"] is not None else
+               TR._order(t["corners"]) if t else
+               np.array([[0, 0], [w0 - 1, 0], [w0 - 1, h0 - 1], [0, h0 - 1]], float))
+    T = _homography(spec, w0, h0)
+    T = np.eye(3) if T is None else T
+    now = RC._apply(T, outline)
+    claim = f"{K.MODES.index(mode) + 1}-point"
+    if float(np.linalg.norm(RC._apply(H, now) - now, axis=1).max()) <= mark:
+        return jsonify(C.readout(0.0, f"already {claim}", mode=mode,
+                                 mark_accuracy_px=round(mark, 2)))
+    R_ = np.linalg.inv(Kc) @ H @ Kc
+    if not s["measured"] and R_[2, 2] < 1 - 1e-6:      # more than a roll
+        return jsonify(C.undetermined(
+            f"standing this up as {claim} turns the camera, and how far depends "
+            f"on the lens. {c['focal_refused']}", mode=mode))
+    # the corners may not pass behind the old camera: warping past it would
+    # paint a mirror image into the frame
+    for reach in (RC.STRETCH, 2.0, 1.5, 1.0):
+        M, ow, oh = RC.canvas(H, Kc, now, mode, MAX_SIDE, reach)
+        back = np.linalg.inv(T) @ np.linalg.inv(M)
+        rect = np.array([[0, 0], [ow - 1, 0], [ow - 1, oh - 1], [0, oh - 1]], float)
+        if ((back @ np.c_[rect, np.ones(4)].T)[2] * (back @ [ow / 2, oh / 2, 1])[2] > 0).all():
+            break
+    else:
+        return jsonify(C.undetermined(
+            f"turning this picture to {claim} sends its corners past the "
+            "camera, and no frame holds it. Have the family nearer the center "
+            "of the picture face the viewer", mode=mode))
+    turn = float(np.degrees(np.arccos(np.clip((np.trace(R_) - 1) / 2, -1, 1))))
+    roll = float(np.degrees(np.arctan2(up[0], -up[1])))
+    tilt = float(np.degrees(np.arcsin(np.clip(up[2], -1, 1))))
+    lens = f"Lens {c['focal_px']:.0f} px, " if s["measured"] else "No lens measured, "
+    where = f"taken {'where the turn left it' if t and t['pp'] else 'at the middle of the frame'}"
+    note = (f"Stood up as {claim}, a turn of {turn:.1f}\u00b0 (the camera was rolled "
+            f"{abs(roll):.1f}\u00b0 and tipped {abs(tilt):.1f}\u00b0 "
+            f"{'down' if tilt < 0 else 'up'}). {lens}center of vision "
+            f"{where if s['pinned'] else 'measured'}; "
+            f"the worst line misses it by {c['worst_move_px']:.1f} px, a mark is "
+            f"worth {mark:.1f}.")
+    return jsonify({**C.readout(
+        round(turn, 2), "straightened", mode=mode, roll_deg=round(roll, 2),
+        tilt_deg=round(tilt, 2), focal_px=c["focal_px"],
+        principal_point=c["principal_point"], worst_move_px=c["worst_move_px"],
+        mark_accuracy_px=round(mark, 2), reach_f=reach, frame=[ow, oh]),
+        "trim": {"corners": RC._apply(back, rect).tolist(), "out": [ow, oh], "note": note,
+                 "outline": outline.tolist(),
+                 # M less the turn: the new axis is where the frame put K's centre
+                 "pp": RC._apply(M @ np.linalg.inv(H), Kc[:2, 2][None])[0].tolist()}})
+
+
 @app.post("/api/consensus")
 def consensus():
     """The nearest consistent perspective, and what reaching it costs.
@@ -2461,8 +2688,12 @@ def main():
     ap.add_argument("--port", type=int, default=8830)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--keep-alive", action="store_true",
+        help="keep running after the last browser window closes")
     args = ap.parse_args()
     print(f"Persimmon  ->  http://{args.host}:{args.port}")
+    from labkit import lifetime     # stop once the last browser window closes
+    lifetime.flask(app)
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
 
 

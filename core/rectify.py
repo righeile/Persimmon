@@ -150,6 +150,11 @@ def straighten(image, K, pts, vp_a, vp_b, vp_up=None, outline=True):
         return None, None
     K = np.asarray(K, float)
     Ki = np.linalg.inv(K)
+    # the plane's normal has to point away from the eye: from the far side the
+    # plane is a mirror image, and which side came of the order of the two points
+    p = np.c_[np.asarray(pts, float).reshape(-1, 2), np.ones(len(pts))]
+    if (p @ Ki.T @ R[2]).sum() < 0:
+        R = np.diag([-1.0, 1.0, -1.0]) @ R
     H = K @ R @ Ki
     if upright_error(H, pts):
         # a vanishing point names a direction, not which way along it, so the
@@ -183,3 +188,58 @@ def upright_error(H, pts):
     p = np.asarray(pts, float).reshape(-1, 2)
     a, b = int(np.argmin(p[:, 1])), int(np.argmax(p[:, 1]))
     return bool(q[a, 1] > q[b, 1])
+
+
+STRETCH = 3.0            # a turned picture is kept out to this many f from its centre
+
+
+def upright(K, up, mode, depth=None):
+    """The camera turned about its own centre to stand as `mode` says.
+
+    `up` is the world's up in the camera (x right, y down, z ahead). Three-point
+    only rolls about the optical axis, which levels the horizon and leaves the
+    tilt alone. Two-point also takes out the tilt, keeping the heading, so the
+    uprights come out parallel. One-point looks along `depth`, a horizontal
+    direction, so its lines meet at the centre of vision and the horizontal
+    square to it runs flat. Nothing moves in the scene, so the turn is K R K^-1
+    and needs no depth. None when the view runs along the upright: there is no
+    level to stand it on.
+    """
+    K, up = np.asarray(K, float), _unit(np.asarray(up, float))
+    z = np.array([0.0, 0.0, 1.0])
+    if mode == "three":
+        fwd, down = z, -(up - (up @ z) * z)
+    else:
+        fwd = z if mode == "two" or depth is None else np.asarray(depth, float)
+        fwd, down = fwd - (fwd @ up) * up, -up
+    if min(np.linalg.norm(fwd), np.linalg.norm(down)) < 1e-6:
+        return None
+    fwd, down = _unit(fwd), _unit(down)
+    return K @ np.stack([np.cross(down, fwd), down, fwd]) @ np.linalg.inv(K)
+
+
+def canvas(H, K, outline, mode, max_side=4000, reach=STRETCH):
+    """(H, width, height): H shifted so `outline` lands in a picture of its own.
+
+    The scale stays 1:1 at the centre of vision unless that overflows
+    `max_side`. A type keeps the centre of vision in the middle of the frame
+    along any axis it cannot measure it on: both for three-point, x for
+    two-point, since the checks then assume it there. One-point measures it, so
+    its frame is tight; centred, a view turned onto an off-picture vanishing
+    point would be mostly empty. A turned picture stretches without limit
+    toward 90 deg off its axis, so the frame stops `reach` f from the centre.
+    """
+    K = np.asarray(K, float)
+    c, reach = K[:2, 2], reach * K[0, 0]
+    q = (H @ np.c_[outline, np.ones(len(outline))].T).T
+    # a corner past 90 deg has gone behind the new camera: it runs off the
+    # frame the way it was heading, and the reach stops it
+    q = np.clip(q[:, :2] / np.maximum(q[:, 2:], 1e-6), c - reach, c + reach)
+    lo, hi = q.min(0), q.max(0)
+    for ax in {"three": (0, 1), "two": (0,)}.get(mode, ()):
+        half = max(c[ax] - lo[ax], hi[ax] - c[ax])
+        lo[ax], hi[ax] = c[ax] - half, c[ax] + half
+    span = hi - lo
+    s = min(1.0, max_side / float(span.max()))
+    T = np.array([[s, 0, -lo[0] * s], [0, s, -lo[1] * s], [0, 0, 1.0]])
+    return T @ H, *(min(max_side, int(np.ceil(v * s))) for v in span)

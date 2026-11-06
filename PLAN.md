@@ -3619,3 +3619,1227 @@ equidistant or equisolid rather than stereographic (the marks choose the model
 only partly, §47.4); and camera out for 5-point.
 
 **654 passed, 0 failed.**
+
+## 51. "take this photograph" — the type guessed, the picture straightened, patterns on a plane, and arches — 2026-10-30
+
+*The requests,* over one photograph of a museum gallery: a herringbone parquet,
+two walls, a great arch and a window with a round head.
+
+> take this photograph. make a preset for edge detection in such a case,
+> perspective guess and then I want to be able to 'straighten' its perspective:
+> to make horizon truly horizontal and the perspective match two-point or any
+> selected
+
+> and concerning this picture, we need some sort of option for such patterns on
+> the floors and walls in perspective
+
+Asked what that option should do, the user chose all four on offer: sort
+patterns in detection, check a pattern, show it flat, draw one on.
+
+> we should also detect arches!
+
+The order was camera and straightening first, then patterns, then arches.
+
+The photograph (960 × 1280) stays out of the repository, for the reason
+Worcester left it, so the rows run on drawn and synthetic scenes. Numbers
+"on the photograph" were measured on the real page through `run_mac.command`.
+
+Everything measured on "the rooms" used a throwaway generator: a box room
+ray-cast through a known camera at 960 × 1280, in 3-, 2- and 1-point by turns,
+with plain, tiled, 45° tiled or herringbone floors, doors, windows, pictures,
+arches, and tiled walls in one room of five. 45 rooms unless it says otherwise.
+The generator is not in the repository.
+
+### 51.1 The photograph preset
+
+The parquet crowds the lines. At the defaults the photograph gives 603 segments
+in 5 families: uprights 209 lines, the walls 86 and 90, and 64 and 26 of
+parquet. The second of those has its vanishing point in the frame, where stray
+lines from the walls fall into it.
+
+| spread, merge, floor, join | right of 45 | tip p90 / max ° | lens err p90 / max % | photograph's families |
+|---|---|---|---|---|
+| 1.5, 3, .7, 1.5 (freehand) | 39 | .13 / 1.27 | 3.6 / 19.9 | 5 |
+| .75, 2, .7, 3 (ruled) | 40 | .04 / .30 | 2.3 / 7.4 | 5 (672 segments) |
+| **.75, 3, .7, 1.5** | **40** | **.05 / .30** | **2.3 / 5.3** | **5 (603 segments)** |
+| 1, 2, .7, 2 | 40 | .10 / .30 | 2.3 / 13.9 | 5 |
+| 1, 3, .7, 1.5 | 40 | .09 / 90 (one outlier) | 2.0 / 5.3 | 6 |
+| 1, 3, .7, 3 | 40 | .10 / .30 | 2.3 / 13.8 | 6 |
+| 1.25, 3, .7, 2 | 40 | .13 / .65 | 3.5 / 16 | 6 |
+| 1, 3, 1, 3 | 39 (42 guessed) | .11 / .30 | 2.5 / 13.8 | 6 |
+
+Chosen: **.75, 3, .7, 1.5**, as "photograph". The gain does not show on clean
+line sets (40 of them, lens within .57 % at either spread), only where lines
+have been through a detector. It costs a hand-made picture: on `4.jpg` it splits
+the right wall in two, which is what "freehand" is for.
+
+### 51.2 The guess
+
+`consensus.guess`. Detection's families are not a room: they hold the parquet
+and strays, so a camera fit on them all is wrong, and the heaviest family need
+not be the uprights.
+
+- Three families are tried for squareness, over lens (0.3–4 diagonals) by
+  height of the center of vision.
+- Of the square triples, the one whose horizon the most line lies on (within
+  3° of it), then the most line. Up is the member furthest from that horizon.
+- `places` sets each family against the horizon: nine parts of ten of its line
+  below is a floor's, above a ceiling's, and across it a wall's. Only walls
+  cross eye level.
+- The pair for the camera is the heaviest square pair of walls (a ceiling
+  counts), else of floors, else the triple's own.
+- The type is judged on those lines alone, and on parsimony: the first of 1-,
+  2-, 3-point whose worst line is within a mark. Two families are 1-point only
+  with the vanishing point in the frame, or the family parallel within a mark.
+
+The first reading of a herringbone room came out with the lens 2.5 × too long.
+The cause was in the fit, not the guess: `_seeds` snapped vanishing directions
+to the nearest rotation and half of the time got a mirror image, which the
+solver could not leave.
+
+| | right of 45 | lean max ° | tip max ° | lens err med / p90 / max % |
+|---|---|---|---|---|
+| first | 30 | 10.54 | | max 175 |
+| seeds right-handed; the horizon with most line on it | 37 | 1.24 | 1.27 | p90 154, max 175 |
+| the pair from walls, not the heaviest | 39 | 1.24 | 1.27 | .2 / 3.6 / 19.9 |
+| with the photograph preset | 40 | | .30 | / 2.3 / 5.3 |
+
+Of the rooms still wrong at the defaults, four are three-point rooms read as two
+within a mark.
+Detection and guess together take 1.21 s; `stand` a median .20 s, worst 5.62 s.
+
+On the test pictures: 1, 3, 4, 5 and Worcester read 2-point, `5point.png` reads
+3, and 2 and `shadowtest.png` read 1, where all three types lie within a mark
+(4.5, 4.51, 4.56 and 3.52, 3.0, .6 px), so the simplest stands. The marks on
+`shadowtest.png` say three. The fSpy picture reads 2-point with a lens of about
+1491 px against the file's 1054: its uprights are all but parallel, which is the
+known 29.6 px its verticals must move against the file's camera.
+
+On the photograph: **looks 2-point**, worst line 42.9 px as 1-point, 6.9 as
+2-point, 2.3 as 3-point, a mark worth 9.3; lens 903 px (a phone's 890–960);
+rolled 2.8°, tipped 2.7° down; 1.2 s. **Take** gave layers `uprights`, `wall 1`
+and `wall 2` of 24 lines each.
+
+### 51.3 Straighten
+
+`RC.upright`, `RC.canvas`, `/api/upright`. Nothing in the scene moves, so the
+turn is K R K⁻¹ and needs no depth. Three-point rolls about the axis. Two-point
+also takes out the tilt and keeps the heading. One-point looks along a chosen
+horizontal. A roll needs no lens, and is made even when none was measured. A
+turn that does need one is refused, as is one that sends the corners past the
+camera, since warping there paints a mirror image. The frame stops 3 f from the
+center, then 2, 1.5, 1, before refusing. The fit is always three-point: it says
+where the camera stood, and the selection says where it should have.
+
+The result is a trim (`corners`, `out`, `note`, `outline`, `pp`), so every route
+that touches pixels gets it unchanged, and the marks move through `/api/retrim`
+as they do for any trim. `outline` is the original picture's edge, which
+`V.not_edge` keeps Detect edges off, and `pp` is where the center of vision
+landed, which the next guess starts from.
+
+The center of vision is pinned at the middle of the frame, and let go when the
+pinned fit misses by more than a third of a mark, since a crop is what breaks it:
+
+| rooms | free: time, lens err med / max % | pinned: time, lens err med / max % |
+|---|---|---|
+| 7 usable | 2.17 s, 2.59 / 22.05 | .03 s, .1 / 4.11 |
+| 8 usable, some cropped | 1.25 s, .2 / 7.64, up err max .24° | .03 s, .17 / 5.45, up err max 2.69° (on crops, worst 3.2–4.6 px; uncropped ≤ 1.0 px) |
+
+On the photograph:
+
+| step | result |
+|---|---|
+| 2-point | 1056 × 1329, a turn of 3.9°, lens 902, worst line 2.2 px; every mark moved with the trim |
+| again | "Already 2-point to within a mark." |
+| Consensus on the result | already consistent, 904.7 px, worst 2.20 px, median .35 |
+| Detect edges on the result | 2-point, 2.4 / 2.4 px, lens 906, rolled 0.0°, tipped 0.1° up |
+| 1-point | 1780 × 2528, a turn of 35.4°, facing either wall by choice |
+| ⌘Z | back to 1056 × 1329 |
+
+Server-side, 3-point is a turn of 2.76° in a 1021 × 1325 frame. Facing the other
+wall in 1-point is a turn of 54.53° in 1678 × 4000 with the frame stopped at 3 f,
+and a second go refuses for the lens.
+
+### 51.4 Patterns on a plane
+
+`core/pattern.py`. An even repeat needs no camera. The plane's vanishing line
+and one repeat fix the whole lattice, so the lens stays out of it and a room's
+camera is never touched: a surface made from a pattern keeps its vanishing
+points in `own_vps`, away from `doc.vps`, which the camera is solved from.
+
+**Laying it on.** Three marks are a repeat: a corner and the next along each
+side. Motifs are grid, checker, brick, herringbone and mirrored herringbone,
+whose repeat is one plank. Tiles are polygons in plane units, clipped to the
+region and to a band short of the vanishing line. They stop where a repeat falls
+under 2 px, and a count past 6000 is refused with the number.
+
+**Checking it.** Marks from the fourth on are corners further off. Each is read
+as the nearest corner of the lattice, nearest first, so a long run is never a
+whole repeat out, and then all pull on the fit together with the vanishing line
+held. The value is the furthest any mark is from the fit, the verdict even or
+drifts by a mark, and three marks are undetermined. When the marks run along one
+side the card says the other is not tested.
+
+The stair of a herringbone has a hand, and the two do not mix. On nine real plank
+corners of the photograph, with the lens at 903 the plank's sides are 91.9°
+apart:
+
+| widths long | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|
+| mirrored, worst px | 32.05 | 18.46 | 9.95 | 4.35 | 4.35 | 4.94 | 6.04 | 7.92 |
+
+Plain herringbone drifts 34–113 px at any length. The planks come out mirrored,
+6 or 7 widths long, even. The two lengths cannot be told apart on these marks,
+which run along one direction only, and the card says so.
+
+**Finding it.** `comb` takes the plane's vanishing line to infinity, so lines on
+that plane come out parallel at their true steps, and reads the steps as a
+periodogram: a missing line costs nothing. `found` tries each family on the
+floor's plane and on each wall it could lie in, and the uprights on each wall.
+Lines wholly on the floor and not the room's are a pattern however they fall,
+because real planks leave too few edges to show a step. So is whatever is square
+to them there.
+
+A row caught the evenness test passing lines at random, and the cause seemed to
+be that it counted by length. That was half of it: the row's lines ran behind
+the camera. On sound geometry the old count passed 14 of 1800 random sets, 3 %
+at the worst size. It is still fixed: each line now counts once, however long
+and in however many pieces, or a few near lines are all the evidence.
+
+| strength needed, t/√n | random sets passed of 1800 | worst, of 300 at one size | wall rows in the 9 tiled rooms | untiled rooms with a wall row, of 36 | patterned floors found |
+|---|---|---|---|---|---|
+| by length, t = 3.2 | 14 | 10 | 8 | 3 | 29 |
+| each line once, 3.2 | 0 | 0 | 7 | 2 | 29 |
+| **3.0** | **6** | **4** | **10** | **2** | **29** |
+| 2.8 | 24 | 11 | 11 | 4 | 29 |
+| 2.6 | 107 | 58 | 12 | 14 | 29 |
+
+3.0 is the knee. On the photograph: one row, "Floor pattern: 50 lines in 2
+directions", 43° to the room and .6° off level, which agrees with the horizon.
+**hide** takes off the 41 floor lines and the 9 strays of parquet in the wall
+family. No false row. **use** makes a surface and a pattern layer on it.
+
+On the page, mirrored herringbone, 7 widths long, on 9 marks at 130 % zoom: 402
+pieces over the found patch, Check **even** at 4.14 px. After Straighten, 4.26
+px, and the pattern still sits on the planks, its surface's points having moved
+with the rest. In the PDF it goes out as vectors, over the whole floor.
+
+The photograph has no patterned wall, so a wall was tried on a room from the
+generator (1-point, 45° tiles on the floor, tiled walls) through the same page.
+Photograph preset, 2.2 s: "Wall pattern: 25 lines in 1 direction", "Floor pattern:
+40 lines in 2 directions", "Wall pattern: 46 lines in 2 directions". **use** on the
+last: surface `wall`, pattern layer in marking mode. 17 true corners at 108 %:
+625 pieces, Check **even** at .66 px, the lattice on the real joints.
+
+**Show flat** already turned a surface to face the viewer, and this floor and
+that wall showed four things wrong with it.
+
+- A sliver. The far half dominated this floor, at 1600 × 493. `_span` now leaves
+  out the half of the points toward the vanishing line, where a step on the page
+  is a mile on the plane.
+- A mirror image, older than this work. Nothing made the plane's normal point
+  away from the eye, so which side it was seen from came of the order of its two
+  vanishing points. `straighten` now takes the side the marks are on. Shape rows
+  cannot see a mirror: a row now follows a triangle's handedness, and another a
+  disc off both diagonals, since sideways and mirrored together is a transpose.
+- Sideways. `frame` stands the first direction up, which a pattern's surface
+  gives as its horizontal, and the vertical family was matched by id, which a
+  surface's own points never share. The uprights are now found by direction: when
+  they are not square to the plane they stand up. On a floor they say nothing.
+- The claim's camera. Take sets 2-point, whose camera is level by decree, with
+  the center of vision on the horizon: y 718 for a true 640 in a room tipped 4.9°.
+  The wall's own upright then came out 87.2° to its courses. A shape seen square
+  on is a fact about the room, so `_flat_camera` uses Straighten's camera when the
+  lines measure a lens, and the claim's otherwise. 1-point and no lens is refused,
+  now under its own name, since Straighten is another button.
+
+The same wall of a generated room, tipped 4.9° (seed 42, true lens 907):
+
+| | size | as seen | directions |
+|---|---|---|---|
+| before | 882 × 1600 | door on its side, right wall on the left | 87.2° |
+| after | 1600 × 895 | door upright, window left, right wall right, tiles square, outline on the joints | 90° at lens 907 |
+
+The floor of the photograph comes out 1302 × 1600, the right way round, with the
+planks square to the page and its plane .56° off level. Its two found directions
+are 3.3° off square at lens 903, which is the far point's own error along the
+horizon (it lies at x −5869): that moves a direction and not the plane, so the
+view stands and only the outline leans.
+
+### 51.5 Arches
+
+`core/arches.py`. Detection worked on straight lines only, and the page's arch
+marking waited for a hand. LSD's pieces of 6 px and up are linked end to start
+within 5 px and a turn of 40°, walked from the longest unused piece keeping one
+sign of turn, and a conic is grown from the middle of the run until it stops
+changing, which leaves off the straight jambs. Kept: a turn of at least 60°, a
+span of .05 diagonals, a fit within 1.5 px, a bow upward, not another side of a
+molding already kept. Twelve points come out, as a hand would mark, so that an
+arch is measured and not drawn over.
+
+| gap px, turn ° | outer rims in frame | found | other | photograph's arcs |
+|---|---|---|---|---|
+| 5, 28 | 14 | 8 | 15 | 3 |
+| **5, 40** | **14** | **12** | **18** | **3** |
+| 6, 40 | 14 | 12 | 19 | 2 (loses the archivolt) |
+| 5, 50 | 14 | 11 | 17 | 3 |
+| 4, 40 | 14 | 11 | 17 | 2 (loses the outer head) |
+| 8, 40 | 14 | 12 | 19 | 2 |
+
+"Other" is not false: against every rim, inner and cut by the frame, 25 of the
+30 arcs lie within 5 px along most of their length, and the other 5, viewed one
+by one, are half-rims on real arches running on down a jamb. No false arch. It
+takes about .04 s a room. A found arch can run a little past its springing: 37 px
+of a 218 px jamb on the row's drawn arch, reading .525 for a semicircle's .5.
+
+**Its wall.** An arch square in its wall makes the wall's horizontal and the
+upright conjugate, so the polar of the wall's vanishing point passes through the
+upright's. That needs no lens and no shape, so it cannot bias the reading, which
+"the wall that makes it roundest" would. Of all 30 arcs 23 were right; of 11
+under 120° of turn 4 were wrong. So a wall is named only from 120°, with the
+best wall missing by at most 6° and the next by 2° more: 16 named, 16 right, and
+3 left to the hand. Typically .7° against 40.2°, and at the worst 5.2° against
+10.8°. On the photograph, .83° against 12.38° for the outer head, 3.76 against
+8.29 for the archivolt, 2.76 against 15.37 for the inner head.
+
+On the photograph: "Arch: turns 163°, 239 px across", 73°, 298 px, and 69°, 217
+px; .1 s. **use** on the first: an arch layer of 12 marks in marking mode, its
+wall set to `wall 1` unasked. Check: arch, rise/span .550, crown off 0.000,
+springing off .067, camera 909.7. After Straighten: .542, 0.000, .018, 907.8.
+The 73° archivolt refuses a shape, rightly, under the 120° gate.
+
+### 51.6 What the rows caught
+
+- The note "the other is not tested" could never fire on a grid: the span
+  counted the repeat's own marks.
+- The evenness test, above.
+- `/api/upright` read a key that lives in the guess, not the fit: a 500 on any
+  turn with the center of vision pinned.
+
+The page caught what no row could: a pattern's marks joined on screen in the order
+they were clicked; the four faults of Show flat above; and, opening a second
+picture, the first one's guess and rows left on the panel, with buttons that would
+throw, since `S.cand` was cleared and the panel not redrawn. Reading the flat wall
+by eye is what found the mirror.
+
+Each new piece was broken once on purpose, in a copy, and a row had to fail:
+35 breaks, 23 of them caught at the first pass. Twelve survived. One changed
+nothing, and was replaced by a break that did. The others each got a row, and the
+break now fails it: seed handedness, the upright's place, corners past the camera,
+a carried center of vision (in Straighten and in the guess), the frame's reach,
+nearest-first, the tiles' band, counting by length, an arch's size and its
+smoothness. The size and turn test was then split in two, and each half fails its
+own row. Six more breaks went into Show flat's fixes, and all fail a row.
+
+A row can pass a break for the wrong reason, so the rerun mattered as much as the
+rows. The first seed row looked at one room and passed without the line, which 129
+of 900 line sets need: it now takes 30 rooms in 3 orders. The first turn row was a
+rim no arch came of anyway, so rims were swept for one only the turn test refuses.
+The first no-lens row sent no lines at all, and never reached the lens test.
+
+Not built: a crop of the wedges a turn leaves (Move corners covers it); measuring
+a plank's length, which is typed; a lens read off a pattern's squareness, which
+would let Show flat turn a 1-point room's side wall. Fisheye and 4- and 6-point
+stay as §50 left them.
+
+**815 passed, 0 failed.**
+
+## 52. "in worcester picture it detects parts of arches and makes them linear" — curves out of the line families, and a vault's ribs sorted by the plane they lie in — 2026-10-30
+
+*The requests,* over `testdata/worcester.jpg`, a nave's vault seen along its length.
+
+> in worcester picture it detects parts of arches and makes them linear
+
+> some ribs are still green
+
+That was about the overlay: ribs still kept as lines.
+
+> also, we need to separate different 'rib families': the flat ones and the '3d' ones
+
+Asked what was meant, the user chose by plane. Flat lies in one plane of the
+building: transverse arches across the nave, wall ribs. 3D crosses through depth
+from the springing to the ridge: diagonals, tiercerons.
+
+The file stays out of the repository, so the rows run on a drawn nave, and numbers "on Worcester" were measured on a local copy, 1200 × 1200.
+
+Where it started: 1500 lines, 2 arches in a vault of dozens, and a guess of 2-point
+with the horizon near y = 4760. The picture is a crop of a level photograph: the
+uprights meet at (1925, −63318), and hand marks run down the nave to about
+(260, 1563), good to ±40 px. So it is 1-point, with the horizon through that point.
+
+Numbers for the sort are scored two ways. On Worcester the ridge bosses were placed
+by hand and the ribs at bosses 0 to 7 labelled: an even boss takes one rib a side,
+which is flat, and an odd boss two a side, which run to the pier before it and the
+one after. "19 versions" are the picture rolled, flipped, blurred, noised, darkened,
+compressed, cropped and resized. On synthetic naves the truth is known for every rib,
+and "12 scenes" vary the tilt, the eye, the bays and the ribs missing.
+
+### 52.1 Curves out of the families
+
+A rib comes out of LSD as a run of chords, each straight enough to pass, and a
+hundred ribs' chords make a family for any point. So runs of lines are grown round
+a curve, and a curve's chords leave the families. Turning 25° a curve is a curve
+anywhere: on 13 pictures that took none of 67 lines marked by hand, and table edges
+and window jambs stayed. At 20° those went too, so a curve turning 20 to 25° is
+taken only when a vault's ribs all agree on one shape about one point. Those were
+the green ones. Worcester gives up 759 of its 1500 lines.
+
+Joining had a fault of its own. A long straight jamb joined the round above it,
+since a join was limited only by its corner. A piece of a curve stands at most 3 px
+off it (`BOW_PX`), and a chord L long bowing b turns 8b/L in its length, so that now
+limits the join too. On the row's drawn arch: turn 181° to 152.4°, the run down the
+jamb 36.7 px to 2.5 px off the rim, the wall it stands in missed by .29° to .12°.
+§51.5's "37 px of a 218 px jamb" is that row.
+
+It moved one thing the wrong way. The arch's wrong wall went from 6.18° to 5.88°,
+inside §51.5's 6° limit, and a wall it is not in was named. Over 133 scenes and 122
+arcs the true wall is missed by .31° at the median, .77° at p90 and 3.06° at most,
+and the wrong one by 4.32° at the least, 5.12° at p10 and 7.65° at the median:
+
+| `WALL_MISS_DEG` | wrong walls named, of the wrong ones left alone |
+|---|---|
+| 6 | 34 |
+| 5.5 | 25 |
+| 5 | 7 |
+| 4 | **0** |
+
+The photograph of §51 keeps its wall for the outer head, and its three arches:
+.8° against 12.39°, 3.79° against 8.3°, 2.73° against 15.38°.
+
+### 52.2 The point the vault runs to
+
+Ribs of one section are copies of each other scaled about one point. That says the
+point lies somewhere on the ridge and little more: alone the ribs slid 660 px along
+it, and 20 of Worcester's 120 fit about a point 1000 px off as well as all of them
+do about the true one. A point therefore pays for the curves it leaves out
+(`_misfit`).
+
+Lines say which point. `_meets` proposes where lines meet, by a grid and not the best
+point of each round, which the piers use up. The ribs keep those fitting within 1.3
+times the best (`CLOSE_FIT`), and among them the most lines through it wins, not
+counting the biggest bundle of near parallels, which meet anywhere (`_across`). Line
+support alone, balanced support, the count of curves explained, the single best
+ridge, rib tops on one ray and the fit alone were each tried first and failed on
+some version.
+
+| version | point, in the picture's own coordinates | lines through it |
+|---|---|---|
+| Worcester | 255, 1568 | 21 |
+| rolled ±3, 8° | 254–255, 1574–1592 | |
+| blurred, noised, compressed | 251–264, 1564–1576 | |
+| cropped bottom, middle | 259, 1565; 248, 1589 | |
+| ×.9 | 238, 1600 | 13 |
+| ×2 | 242, 1592 | 26 |
+| cropped right | 608, 1916: **false** | |
+| cropped tight, ×.75, ×.5 | none | |
+
+It takes 2.6 s on Worcester. On synthetic naves the point is at most 1.6 px off. On
+every picture with no vault (1 to 5.jpg, shadowtest, the museum, the fSpy room, the
+5-point sheet) there is none. Ribs set wandering ±20 px, as if loosely drawn, still
+give it within 2 px: wandering breaks a rib into pieces, and each piece fits. The
+false point is refused further on, in §52.4.
+
+Two limits refuse a point. Fewer than 5 lines across it say nothing of where it is.
+And the curves have to follow it to within .6 % of the diagonal, which is what stops
+the wrong point on Worcester at ×.75 (−5, 1468, at 7.87 px against 7.6) and on its
+side (11.32 against 10.2) or upside down (14.92).
+
+### 52.3 Flat and 3D
+
+Take N the point and V the uprights' vanishing point. Under a tilt t a point (X, Y, Z)
+images at (f/z)(X, Y/cos t) from N, with z = Z cos t + Y sin t. So with
+ℓ(P) = 1 − (P−N)·(V−N)/|V−N|², ℓ/|P−N| is depth over radius at every polar angle,
+with no lens: flat ribs are exact scalings in that. With V at infinity ℓ is 1. A
+row tips a nave 15° and reads its flat ribs one ratio to 2e-15 with the uprights,
+and spread by 3.6 % without.
+
+Each side is fitted as log r_i = α_i + β_i t + g(t), with g shared: an offset and a
+slope for each rib, and whatever is left is the section. Every flat rib then has the
+same ratio of crown to foot. A rib running half a bay along the vault is off that by
+half a bay over its depth, so the ratios y lie on three lines
+
+    y = a + s c x,   s = −1, 0, +1
+
+with x the rib's size at the crown, the nearest rib's 1. `a` belongs to a side,
+`c`, half a bay over the nearest rib's depth, to the vault. Each rib votes by its
+size: far ribs crowd together where the lines close, and a row with 14 of them at
+.36 keeps the flat line of 12 near ones at .2. A rib is flat or 3D by which line
+it is nearer, by more than twice what it can be misread by, and undetermined
+otherwise. So are wall ribs, which lie in a plane through N and sweep nothing, and
+curves stopping short of the crown.
+
+Two things that looked right were false:
+
+- Mirror pairs cannot pick out the flat line. Near diagonals pair with near diagonals
+  and far with far just as an arch's two sides do.
+- Tying `a` across the two sides by the crown's level. The eye is off the axis, and
+  at ×1.5 that gave 1.182 on the right, the near line. On Worcester flat is 1.29 on
+  the right and 1.46 on the left.
+
+### 52.4 When the ribs show no lines
+
+Ribs read to 2 or 3 % with the lines 5 to 10 % apart, and some three lines can always
+be drawn. Blur 2, JPEG 40 and a crop at the right made 3, 5 and 2 confident wrong
+calls. Counting ribs on a line does not help: random ratios pass a count.
+
+Resampled refits, then a gate on how far half a bay moved, stopped those: wrong calls
+0 at 90 % agreement, and half a bay settled at 48–60 % on the bad cases against
+70–100 %. But with the refusal below in place they only cost right calls:
+
+| refits must agree | Worcester right, wrong, undetermined | synthetic |
+|---|---|---|
+| no refits | **66, 1, 17** | **204, 1, 29** |
+| .5 | 66, 1, 17 | 203, 1, 30 |
+| .6 | 61, 1, 22 | 199, 1, 34 |
+| .7 | 53, 1, 30 | 196, 0, 38 |
+| .8 | 47, 1, 36 | 188, 0, 46 |
+| .9 | 38, 1, 45 | 184, 0, 50 |
+
+So they went. What stayed is asking whether the ribs fit better than ribs with no
+lines in them, and all the work is in what that means. Shuffled ratios are no fair
+test: they keep three clean clusters. Uniform ratios were too easy: 4 to 8 % passed
+in simulation, but 3 or 4 of 10 pictures drawn with no lines at all, because ribs
+close with depth whether or not they form lines. The test that works moves each rib
+at random along its depth by up to a line's spacing, y + x·U(−c, c): the spread and
+the closing stay, and only the lines go. The sort is refused when more than 2 % of
+400 such draws score as well.
+
+| limit | Worcester: sorted of 19, wrong, right | synthetic: sorted of 12 | no lines in them: sorted of 30 |
+|---|---|---|---|
+| .01 | 9, 1, 57 | 11 | 1 |
+| **.02** | **10, 1, 66** | **11** | **1** |
+| .03 | 10, 1, 66 | 11 | 4 |
+| .05 | 10, 1, 66 | 12 | 5 |
+| .1 | 11, 1, 74 | 12 | 10 |
+
+The result at 2 %, with no uprights given:
+
+| Worcester | half a bay | as good by chance | flat, 3D, undetermined | labelled: right, wrong, undetermined |
+|---|---|---|---|---|
+| as it is | .105 | .005 | 6, 12, 24 | 5, 0, 2 |
+| ×1.5 | .100 | .005 | 7, 19, 16 | 8, 0, 2 |
+| ×.9 | .110 | 0 | 7, 14, 16 | 8, 0, 1 |
+| flipped | .090 | .003 | 4, 17, 25 | 3, 0, 3 |
+| rolled −3° | .100 | .003 | 7, 19, 19 | 6, 0, 1 |
+| brighter | .110 | .005 | 10, 13, 18 | 7, 0, 4 |
+| noise 6 | .105 | .015 | 8, 12, 17 | 9, 0, 1 |
+| cropped top | .095 | .005 | 6, 14, 19 | 5, 0, 1 |
+| cropped bottom | .090 | 0 | 5, 17, 26 | 9, 0, 2 |
+| cropped left | .100 | 0 | 8, 15, 15 | 6, **1**, 0 |
+
+The price is plain: 9 of Worcester's 19 versions refuse, among them every blur
+tried, JPEG 40, a 3° and an 8° roll, ×2 and darkening. The false point above is one
+of them. Of 84 labelled ribs in the versions sorted 66 are right, 17 undetermined
+and 1 wrong; of 234 on synthetic scenes, 204, 29 and 1 (`eye centre`); and 11 of the
+12 scenes sort. One of 30 pictures with no lines in them still gets through.
+
+The limit table was read at 400 draws while the code took 200, at which the second
+lowest of those 30 reads .015 and passes; at 1000 it reads .026. So the code takes
+400, and .7 s.
+
+The flat ratio itself moves between versions, 1.29 to 1.49 on the left. That is the
+foot it is read at, the median of where the ribs stop: it rises steadily with the
+sweep to there, 16.0° to 21.6° over the same versions. The calls do not move.
+Between any two of the 10 sorted versions, ribs called firmly in both agree in 385
+of 387 pairs, beyond boss 7 too. That is agreement and not truth, but it is the only
+evidence there is for ribs with no label.
+
+Tipping decides what the uprights are worth. On this nave, over 5 seeds each at 7,
+15, 20, −8 and −15°, they give 302 right, 4 wrong, 29 undetermined and 3 scenes
+refused, against 294, 0, 34 and 3 without: little, because the foot is only a third
+lower than the crown, what is common to all ribs goes into `a`, and the flat ribs
+differ by 2 to 4 % against lines 10 % apart. The 4 wrong are one scene at 20°, at
+chance .02, which reads 9 right without them. The test that matters is nearer or
+deeper vaults, where the same tilt is worth a whole line's spacing: over 72 scenes
+at ±10, 15 and 20° they give 683 right, 4 wrong and 10 refused, against 375, 3 and
+28. So they stay, and without them it is mostly refusal and not wrong calls that
+pays. At ±20° on the nearest vaults and at 25° there is no point at all.
+
+### 52.5 What the point does for the rest
+
+Its family starts the list (`V.vps(known=)`) when 4 or more lines back it, however
+light, and a point no line runs to is left out. The vault's length is level and runs
+down the view, and that outweighs the rest (`guess(along=)`): a triple of square
+families is not read first, a pair has to include it, and it may lie outside the
+frame without losing 1-point. The stone courses on the webs make four more families
+that would otherwise outvote it, and the wrong horizon came from them.
+
+A 1-point guess now gives no lens and no tilt, since those came from a family that
+is not part of it. Worcester reads "Looks 1-point … No lens measured. Rolled 1.2°",
+which is what the marks say.
+
+The courses also read as "Ceiling pattern: 212 lines in 4 directions". A vault's
+ceiling is curved, so its courses lie in no one plane, and ceiling patterns are
+dropped when a vault's point is known. A row reproduces it on the nave with strokes
+in the webs.
+
+An arch that is already a sorted rib is not offered again (`beside`). One left
+undetermined still is.
+
+### 52.6 The page, and what the rows caught
+
+Through `run_mac.command` on the real page, Worcester: "Looks 1-point", "Flat ribs: 6",
+"3D ribs: 10, the foot 5–10 % nearer or further than the crown", and "Read about the
+point 255, 1568 with 21 lines through it. Flat is crown to foot 1.29 on the right and
+1.46 on the left, half a bay 11 % of the nearest rib's depth. The same ribs with no
+lines in them fit as well 0.5 % of the time. 25 more stop short of the crown or read
+between the two (gray)." `use 10` makes 3D rib 1–10 and removes the row, ⌘Z restores
+both, and Take gives 1-point with uprights and the nave. The museum is unchanged:
+2-point, the floor pattern, arches of 163°, 73° and 69°.
+
+Calls of 16 of 41 ribs there against the table's 18 of 42 are the uprights: the
+detector has them, the table does not, and they shift a few borderline ribs.
+
+Unscored: labels stop at boss 7. Beyond it Worcester's calls (11 3D, 2 flat on the
+original) look right on the overlay but are not measured.
+
+Each new piece was broken once on purpose, in a copy, and a row had to fail: 33
+breaks, and run again on the final code all 33 do, 8 of them by a row crashing. Of
+the first 32, 25 were caught at the first pass. Seven survived:
+
+- The fewest lines across a point: every fixture had plenty.
+- The limit on the ribs' fit, which looked dead. Wild shapes and wandering ribs never
+  reached it, and only a survey found the three wrong points of §52.2 it refuses. The
+  best picture came to 8.82 against 8.5, so it moved into `_point`, beside the other
+  refusal, where a row clears it by a factor of 4.
+- The tilt correction, because the sort on that row barely feels it. The row now reads
+  the ratio, which is where the correction acts.
+- A known point ignored: the row's family was found anyway. It now uses one too light
+  to find.
+- `along` beaten by a square triple, and by a pair without it: the fixture had neither.
+- A lens on 1-point: the fixture had no third family to give one.
+
+The notebook caught what the breaks could not. Checking this section's own sentences
+is what found the draws, what the 4 wrong were, and that the uprights looked worthless
+on the one nave they had been tried on.
+
+Not built: the rest of a vault's plan from its ribs, sorting a vault seen from the
+side, and any way of telling wall ribs from transverse arches.
+
+**874 passed, 0 failed.**
+
+## 53. "can we detect the ones that are there and build synthetic archway with ribs by deducing the rule?" — the regular vault the ribs belong to, deduced and built — 2026-10-31
+
+*The request,* after §52 ended on "not built: the rest of a vault's plan from its ribs":
+
+> can we detect the ones that are there and build synthetic archway with ribs by deducing the rule?
+
+So from the ribs Detect edges finds, work out how the vault repeats, and draw all of
+it, the ribs never found included. As in §52 the photograph stays out of the
+repository: the rows run on a drawn nave, and numbers "on Worcester" were measured on
+a local copy, 1200 × 1200.
+
+### 53.1 The rule
+
+A rib and its copy further along are one 3D curve moved along the axis. Rectified
+about the vault's point N, P' = (P − N)/ℓ with ℓ from §52.3, that move is a scaling
+about 0, with no lens (`_flattened`). So depth is the only denominator, and with
+bosses at Z_k = 1 + kh, in the nearest rib's depth, 1/r at the crown is linear in k:
+a comb.
+
+    even k    one flat rib a side            Z = Z_k
+    odd k     two 3D ribs a side, s = ±1     Z(X) = Z_k + s h (X − X_c) / W
+
+An even boss stands over a pier and an odd one between two, and a 3D rib runs straight
+in plan from its boss to the pier half a bay on or back. Solved for a rib as seen,
+Z = (1 + kh − s h X_c/W) / (1 − s h x/W). This is the pattern of §52's hand labels, and
+it describes a plain quadripartite vault too. No other pattern is tried.
+
+The section every rib shares is read round a point below the crown (`SECTION_EYE`),
+where each curve is single valued from ridge to foot. Flat ribs give
+r_f(θ) = r0 + θ p(θ), one p a side and r0 shared. A 3D rib stands off that,
+r_3 = r_f + θ(θ − θ_f) q(θ), tied at crown and foot. Both are trimmed fits, since a
+curve changing edge of its molding jogs. The foot is where the flat curve meets the
+ray 90 % of a side's ribs stop short of (`FOOT_REACH`).
+
+§52's firm calls start it: they set the comb and a first section. Then every rib,
+whole or not, goes to the rib of the rule it lies nearest, within .9 % of the
+diagonal (`RULE_MISS`, 15 px here), and the section is refitted until nothing moves.
+Neither the point nor the uprights are refined. The ribs built run from the first
+in sight to the end of the last bay found, and no further.
+
+### 53.2 What the fit cannot arrange
+
+The crowns' own periodogram, read with no regard to any family, has to peak within 6 %
+of the rule's step (`PEAK_APART`). That is what stops flat ribs at every boss. It does not
+stop bays that are only uneven: of 12 naves with each boss up to ±.3 or ±.45 of a step
+off its place, 1 gives no point, 7 are refused and 4 hold, 4.5 to 6.2 px off at the
+median, built as the nearest regular vault.
+
+The second gate took two tries. It first asked for half the ribs on the rule, and 12 of
+12 naves with random feet were refused, but those were only the scenes kept from before.
+On `selfcheck`'s nave with its crowns in place and each foot uniform within ±spread
+half bays, the rule held on 6 of 40. Far ribs close up until every run lies within the
+limit, so they count as on the rule and say nothing.
+
+| of the ribs | Worcester, the 16 that hold | regular naves, 11 | the 6 that should not hold |
+|---|---|---|---|
+| on the rule | .69–.91 | .96–1 | .50–.79 |
+| on it, and 1.5 times nearer than to any other | .60–.89 | .89–1 | .42–.75 |
+| firm calls on the right parity | .83–.95 | .95–1 | .63–.93 |
+| **on it, above chance, in spreads** | **5.0–8.4** | **3.8–6.4** | **1.2–3.1** |
+
+Chance (`_by_chance`) is what each rib would do with its foot anywhere: the share p of
+runs from −1.5 to 1.5 half bays that would still fall within the limit of a run its
+boss allows, one at an even boss and two at an odd one. The ribs on the rule have to
+stand `RULE_BEAT` = 3.3 spreads above Σp, with spread √Σp(1−p). It replaces the share,
+and nothing the share refused gets past it: JPEG 40 has .49 on the rule and scores 3.1.
+The page says it plainly, "36 of 41 ribs found follow it, where 19 would with their feet
+anywhere".
+
+3.3 was chosen in the gap above, so it was tried on seeds nothing here had seen:
+
+| new scenes | gave a point | hold | score |
+|---|---|---|---|
+| regular naves, 20 seeds | 17 | **17** | 5.4–6.4 |
+| tipped −12° to 15°, 7 | 7 | **7** | 3.8–6.1 |
+| crowns regular, feet at random, 75 | 72 | **2** | 3.4, 3.9 |
+
+So 2 of 72 false rules, against the 2 % §52 accepted for the sort. It is a score and not
+a probability: Σp is too low, since a rib can land on the next boss's rib and the
+section was fitted to the ribs it keeps. On those 72 the score reaches 7.3 and the
+median is 1.6, and the crowns' peak is what stops the high ones, so the two gates work
+as a pair. A limit of 4 would stop both false rules and refuse the −12° nave and a −8°
+one, with all their ribs or all but one on the rule. A vault photographed tipped is
+likelier than one with its feet at random, so 3.3 stays.
+
+A boss left out and predicted from the others is a readout, not a gate. It costs little
+over the fit (7.2 px against 6.9), which is what says the rule predicts and not only
+describes.
+
+### 53.3 What it gives
+
+Worcester, 19 versions. Hold-out is a boss left out and predicted from the others. The
+last column sets the rule's bosses against the 13 placed by hand, in the original's
+pixels.
+
+| version | on the rule | px, median, worst | hold-out px | peak off, % | §52's chance | built (found) | against hand bosses, px, median, max |
+|---|---|---|---|---|---|---|---|
+| x1 | 36/42 | 6.9, 14.6 | 7.2 | 0 | 0.005 | 46 (26) | 8.9, 13.8 |
+| x1.5 | 38/42 | 11.8, 20.5 | 12.1 | 2 | 0.005 | 40 (26) | 9.6, 14.3 |
+| flip | 38/46 | 7.8, 13.9 | 8.8 | 2 | 0.003 | 52 (23) | 7.8, 20.2 |
+| crop top | 33/39 | 8.4, 14.5 | 9.8 | 1 | 0.005 | 47 (21) | 10.2, 14.2 |
+| crop left | 34/38 | 5.9, 14.1 | 6.3 | 1 | 0.000 | 40 (26) | 11.9, 23.1 |
+| bright | 33/41 | 5.9, 13.4 | 6.4 | 1 | 0.005 | 43 (26) | 9.9, 13.8 |
+| dark | 31/45 | 7.1, 12.2 | 8.1 | 1 | 0.172 | 54 (21) | 9.0, 13.2 |
+| roll 3 | 40/44 | 7.3, 13.5 | 8.1 | 2 | 0.055 | 42 (26) | 8.8, 15.6 |
+| roll -3 | 36/45 | 6.0, 14.5 | 6.5 | 1 | 0.003 | 53 (26) | 10.8, 21.9 |
+| roll 8 | 31/35 | 8.1, 13.7 | 9.2 | 2 | 0.110 | 55 (22) | 9.2, 26.9 |
+| blur 1 | 29/37 | 6.8, 12.4 | 8.0 | 4 | 0.142 | 54 (22) | 17.3, 24.7 |
+| noise 6 | 33/37 | 6.6, 14.2 | 7.7 | 2 | 0.015 | 41 (23) | 9.8, 15.0 |
+| crop bot | 40/48 | 6.9, 12.8 | 7.9 | 1 | 0.000 | 52 (27) | 8.8, 23.4 |
+| crop mid | 32/35 | 5.7, 12.2 | 6.7 | 3 | 0.343 | 34 (22) | 7.8, 12.7 |
+| x.9 | 33/37 | 6.6, 12.1 | 7.7 | 1 | 0.000 | 43 (20) | 9.4, 17.3 |
+| x2 | 36/41 | 11.2, 25.5 | 13.2 | 0 | 0.160 | 42 (33) | 4.8, 16.3 |
+| blur 2 | refused: crowns repeat at .108, the rule needs .056 | | | | | | |
+| JPEG 40 | refused: 22 of 45 on it, 14 by chance | | | | | | |
+| crop right | refused: no one section on both sides | | | | | | |
+
+16 of 19 hold, every one with the bosses on the right parity. §52 refused 9 of the same
+19: the rule vouches for 6 of them, the three above stay refused, and among them is
+§52's false point. A sort takes .7 to .9 s. Numbers are in the version's own pixels, so
+×1.5 and ×2 read larger.
+
+Drawn naves, each rib built against its own true rib, px:
+
+| scene | built (found) | median | p90 | max | wrong family | true ribs not built |
+|---|---|---|---|---|---|---|
+| base | 47 (33) | 3.8 | 6.0 | 7.9 | 0 | 0 of 42 |
+| tilt 7 | 41 (26) | 5.2 | 9.1 | 10.3 | 0 | 4 of 42 |
+| tilt 15 | 24 (16) | 4.5 | 6.4 | 8.3 | 0 | 22 of 42 |
+| tilt −8 | 40 (24) | 4.9 | 11.8 | 19.2 | 0 | 4 of 42 |
+| eye centre | 40 (30) | 4.7 | 5.8 | 7.7 | 0 | 4 of 42 |
+| eye right | 46 (29) | 3.4 | 7.1 | 11.2 | 0 | 0 of 42 |
+| sharp | 47 (31) | 4.2 | 8.5 | 16.9 | 0 | 0 of 42 |
+| near bays | 28 (22) | 3.4 | 5.2 | 7.2 | 0 | 4 of 30 |
+| few bays | 23 (19) | 3.8 | 5.5 | 8.1 | 0 | 0 of 20 |
+| skip near | 42 (24) | 3.5 | 6.6 | 9.4 | 0 | 0 of 34 |
+
+Tilt 15 stops at the last bay found, since its far ribs give no read, so 22 true ribs
+go unbuilt. "drop 30", with
+ribs missing at random, is refused: the crowns' peak falls at the bay and not the half
+bay, .214 against .107, which is a refusal of a true vault. Its twin at another seed
+holds, built ribs 3.7 px from the drawn ones at the median, the p90 of 64 being built
+ribs whose true rib was dropped and is not in the list. Erased ribs are scored by a row
+instead, 6.3 px at worst.
+
+The ribs the rule adds, on the photograph. There is no truth for them, so each is asked
+how much of its length runs along a strong edge in its own direction, set against the
+same ribs half a tooth off, which is where no rib should be:
+
+| share of the length | added, 18 | half a tooth off | found, 26 | half a tooth off |
+|---|---|---|---|---|
+| within 4 px, median (p10) | **.76** (.52) | .57 (.36) | .91 (.75) | .58 (.37) |
+| within 2 px, median (p10) | .50 (.34) | .42 (.25) | .71 (.51) | .43 (.22) |
+
+So the added ribs follow something, not as well as the found ones, and the 2 px line says
+how little it takes to be right by accident in a picture this full of stone. The worst
+is the farthest, a flat rib at boss 14, at .42; 2 or 3 near ribs lie out of the frame.
+
+The bosses lie 4.8 to 17.3 px from the hand ones at the median, a quarter to a half of
+the spacing at the far end. Beyond boss 10 the built ribs are guides, not measurements.
+
+### 53.4 What it corrected in §52
+
+Where a rule holds it decides the families. A rib's place on the comb says more than its
+ratio once the three lines close up. Over the 16 versions, right, wrong, undetermined:
+
+| bosses | the rule | the sort alone |
+|---|---|---|
+| 0 to 7 | 117, 1, 9 | 100, 2, 25 |
+| 8 to 12 | 36, 3, 5 | 19, **14**, 11 |
+
+§52 said its calls beyond boss 7 "look right on the overlay but are not measured".
+Measured, 14 of 33 firm calls were wrong. The caveat is that truth there takes the
+nearest hand boss within 30 px, with bosses 30 to 50 px apart, so these two rows are
+softer than the first. A rib is called only if it is 1.5 times nearer one rib of the
+rule than any other (`RULE_NEXT`); the rest go gray with those off the rule.
+
+§52's README line, that about half of the versions refuse, is now 3 of 19.
+
+### 53.5 The page
+
+Through `run_mac.command` on the real page, Worcester: the card reads "Flat ribs: 11",
+"3D ribs: 22", then **build 46** and "The whole vault: 27 ribs found, 19 added by the rule
+(dashed)", and the rule with all its numbers. Build makes two layers, "Flat ribs of the
+vault" 16 and "3D ribs of the vault" 30, solid where found and dashed where added, of a
+new kind, `vault`, that holds ribs rather than marks: it is not in the Add menu, and
+dragging with one selected pans. Its editor repeats the rule. The ribs move with Take and
+Straighten, go through Save marks and Load marks and undo, and Save PDF draws them dashed
+with a key. A new `picture` switch hides the photograph to see the vault alone.
+
+On a nave missing 30 % of its ribs the card keeps `use 3` and `use 12`, has no build, and
+says "No rule deduced: the crowns repeat every 0.214 of the nearest rib's depth, and a
+rule that fits needs 0.108." On a nave with its feet at random: "A vault, its ribs not
+sorted: the ribs lie on three lines no better than chance, and the ribs give no one
+section on both sides." No console errors on any of them. The museum keeps its 2-point
+and arches, and no other test picture finds ribs.
+
+### 53.6 What the rows caught
+
+24 deliberate breaks, each on a copy, against the vault's rows. 22 fail a row: a 3D rib's
+depth the wrong way, flat ribs on the wrong tooth, parity swapped, distance for its
+inverse, one side enough for a section, the peak gate off, the chance gate off, chance
+counted as nothing, every rib said to be found, no vouching, the tilt ignored going in and
+coming back, the feet at the median rib, the last bay left open, the near ribs not
+sought, a hold-out holding nothing out, no 3D offset, the offset not tied at the foot,
+the section read round the crown, no trimming, the limit in fixed pixels, and a hair
+trigger on `RULE_NEXT`. Two end in a crash the run reports: the rule not deciding the
+families, and the section left unchecked after the last round.
+
+The share gate, the rule's vouching, the 3D offset, the foot's percentile, the limit in
+pixels and `RULE_NEXT` all broke unseen on the first pass, and each now has a row. Looking
+for a scene to catch the share gate is how the false rules above were found. The 3D
+offset was the instructive one: the drawn nave's 3D ribs share the flat section, so
+nothing could see it, while on Worcester it is about 1 % of the crown's height, keeps 1 to
+9 more ribs on the rule in 14 of 16 versions, and on blur 1 is the rule. The rows now draw
+a nave with its 3D ribs swollen, `swell`.
+
+Not built: wall ribs and the ridge rib, any pattern but this one, uneven bays, and a plan
+or a 3D view of the vault, which needs the lens that a 1-point picture does not give. A
+vault's section is read from the ribs found and nothing checks it against a true
+measurement, so the build is the nearest regular vault to what is drawn and not a survey.
+
+**900 passed, 0 failed.**
+
+## 54. "I can give you a few more examples of vaults to generalize" — what repeats along a vault, whatever its pattern — 2026-10-31
+
+*The request,* with ten pictures attached, after §53 ended on "not built: any pattern but this one":
+
+> I can give you a few more examples of vaults to generalize
+
+And while that ran:
+
+> careful, one of the pics is 5 point perspective
+
+That is picture 9. Then:
+
+> should I give you markings for 'ground truth'
+
+They were asked for, and none have arrived. So what is called right below, on these ten,
+is by eye, or from the bosses' positions read off the picture. The drawn naves are the
+only scored truth here. The ten stay out of the repository as Worcester does, one
+carrying a stock library's watermark and two a caption, so the rows run on drawn naves
+and the numbers were measured on local copies.
+
+### 54.1 The pictures
+
+| | what it is | curves | lines to its point | what it gives |
+|---|---|---|---|---|
+| 2 | barrel with flat ribs | 46 | 107 | by itself: 1 family, flat, 11 of 11 ribs found |
+| 3 | two-aisled undercroft | 4 | none | nothing |
+| 4 | the same | 1 | none | nothing |
+| 5 | the same | 12 | none | nothing |
+| 6 | groin vaults of an arcade | 24 | none | 3 lines marked: 1 family, 11 of 12 found, undetermined |
+| 7 | quadripartite Gothic, heavily molded | 199 | none | 3 lines marked: §53's rule holds, 28 or 34 built, 14 or 18 found as the point moves |
+| 8 | fan vault | 133 | 39 | refused, with why; 3 lines marked: refused, or a family left undetermined |
+| 9 | dome on pendentives, in 5-point | 22 | none | refused, with why |
+| 10 | domical bays, seen across | 12 | none | nothing |
+| 11 | barrel with flat ribs | 9 | none | nothing |
+| Worcester | as §53 | 114 | 21 | as §53: 46 built, 27 found |
+
+Curves are at the page's own settings. So five of the ten, 3, 4, 5, 10 and 11, give too
+little for any reader: at points read off them by hand no set of copies forms at all.
+"Nothing" means no curves worth asking about (`FEWEST_ASKED`). With lines marked, 3, 5 and
+11 say "ribs are needed on both sides of the crown, and nothing repeats along it at one
+bay". 4 and 10 were not tried with lines.
+
+### 54.2 Copies
+
+§53's rule assumes a plan. What needs no plan is what moving along the vault does. Any
+object translated along the axis stays on its rays from N, and on each ray 1/r is affine
+in the move, whatever the lens, the tilt, the section or the plan:
+
+    u(θ, x) = a(θ) + x b(θ),   b(θ) = T / ρ(θ)
+
+where ρ is the object's radius about the axis. a/b is then that object's own depth, one
+number in a flat rib, and a run from foot to crown reads its plan. Under tilt, flatness
+needs the uprights, as in §52.3 (`_flattened`).
+
+So curves that are copies of one curve are found together with no pattern assumed
+(`_copies`). A pair of curves seeds a set, which grows to any curve lying on the same
+a and b within .5 % of the diagonal, on rays weighted 1/u⁴, and three copies clear of
+each other make a set. Worcester, 7 and 2 give their rib families this way. One rib's
+two sides are two sets, so a barrel reads as two families.
+
+### 54.3 The comb
+
+A set moved along the axis passes through every rib of its family, found by a curve finder
+or not. Stepped through the picture, with the edge along the moved curve recorded at each
+step, x is linear in true depth, so every rib is a tooth (`_moved`).
+
+Stepping uniformly in x gave 10 px a step at the near ribs of 7, so it is stepped in
+pixels of radius. Shading is taken out with the mean within ±60 px and the rest put in
+spreads of the whole comb. A spread within the same ±60 px was tried first, and teeth
+inflate their own: 2 went from 28 teeth to 6. A rolling median instead gave Z of 4.9, 4.2
+and 7.5 on 2, 6 and Worcester against 16.1, 10.7 and 14.0.
+
+There is one gate, the Rayleigh test on the teeth (`_period`). On a period p each tooth
+is a phase, and Z = n R², weighted by height, has chance e^−Z of lining up on one period.
+Chance is counted over the periods tried, span·(1/lo − 1/hi). Teeth on p also lie on p/2
+and p/3, so a longer period doing .6 of the best is taken. Bays a little uneven cost a
+little Z and no more. A first family has to reach .05 over the number of sets read, and
+one sharing rays with a family already read .02 on that bay, since p·b(θ) is T/ρ, and so
+comparable, only on shared rays. Random teeth pass .05 5.3 % of the time (300 draws, a
+row), as stated.
+
+| | sets | Z | chance | teeth |
+|---|---|---|---|---|
+| 2 | 2 | 17.4, 8.3 | 6e-6, .064 | 27, 13 |
+| 6, at a marked point | 1 | 9.0 | .0078 | 14 |
+| Worcester | 4 | 12.8, 6.1, 4.4, 2.7 | 2.4e-4, .11, .2, .86 | 24, 15, 18, 5 |
+| 7, at its marked point | 7 | 13.0 to 8.2 | 1.1e-4 to .013 | 27 to 35 |
+| 8 | 1 | 5.1 | .13 | 12 |
+| 9, at a hand point | 1 | 3.6 | 1.0 | 10 |
+| 3, 4, 5, 10, 11 | none | | | |
+
+2's second set misses .05 over 2 sets. 8's one set reaches .13 and stays refused.
+
+Three things that looked right went:
+
+- Seeds of one flat curve. They gave every false read: the fSpy room at (2029, 783), 9e-6,
+  and (−393, 880), 7e-3, and the museum at (−171, 632), 2e-2. They added no family on
+  any real vault. With them went the comb's self-correlation, and pictures of no vault
+  read nothing at their own vanishing points, about 13 points on 9 pictures.
+- Finding N by how sharp the comb is. The Z map stays flat over ±120 px on 2, best 16.2
+  against a median of 11.9, and the misfit has false minima on tilted vaults. The point
+  comes from lines, `_point`, or the user's marks.
+- A family running past the vault. Past its end a copy still finds edges: Worcester's rose
+  window and dashed ghosts on 7. So a family runs from its first found rib to its last,
+  no further than one rib missed at a time (`_family`).
+
+A found copy stands on its tooth, the tallest within .12 of a bay. On synthetic bays a
+little uneven that gains nothing, but on real ones it does. Share of a rib's length
+within 2 px of an edge, median and p10:
+
+| | on its tooth | where the period puts it |
+|---|---|---|
+| 2 | .857, .771 | .800, .286 |
+| 6 | 1.0, .889 | the same |
+| 7 | .857, .690 | .784, .507 |
+
+### 54.4 Flat or 3D
+
+A set's run is a/b over the rays most of its curves hold, foot from crown, in bays
+(`_sloped`). Foot is the end further from up, so mirror ribs share a sign. `off` is the
+larger of half what splitting its curves in two does and what moving the point by its spread
+does. Fewer than 4 curves, or fewer than 3 lines, leave it infinite. The point cannot be left
+out: on 2, 30 px sideways turned −.10 into −.35, and 60 px into −.66. A family is flat if
+|run| + 2 off ≤ .2, 3D if |run| − 2 off ≥ .2, and undetermined otherwise, and anything past
+1.2 bays is no rib.
+
+The run is read to about ±.3 of a bay. On the drawn nave at the true point, both sides:
+
+| drawn run, bays | 0 | .1 | .25 | .5 | .75 | 1 | 1.25 |
+|---|---|---|---|---|---|---|---|
+| read | −.09, −.13 | .07, −.27 | .25, −.16 | .35, .75 | .61, .33 | .68, .50 | 1.15, .98 |
+
+Scored over 96 drawn naves, 8 tilts from −12° to 15° and 4 eyes, with the true point and
+uprights, by how many times `off` a call has to clear .2 (`CALL_CLEAR`):
+
+| clear by | flat, of 63 | half a bay, 3D of 59 | one bay, 3D of 60 | wrong, of 182 |
+|---|---|---|---|---|
+| 1 | 9 | 12 | 32 | 3 |
+| 1.5 | 8 | 10 | 22 | 2 |
+| **2** | 2 | 6 | 16 | 1 |
+| 2.5 | 2 | 4 | 10 | 0 |
+| 3 | 2 | 3 | 8 | 0 |
+
+It stood at 1 until the last check on the page. 8 was marked by hand there, three lines to
+about (553, 2525), and a family of 10 came out 3D, −.56 ±.23, 9 found. Drawn on the picture
+its curves are real and do repeat, three along fan ribs and six on transverse arches, which
+are flat by eye. All nine are on the right, so nothing on the left could set the run against
+the point. Of 27 tries near that point 2 were firm, and each stood less than two `off` clear of
+.2, as 7's .29 ±.06 on a transverse rib did (§54.6). `off` takes the lines as good to a pixel
+and is one spread of the point, so one `off` clear is no firm call. At 2 those 27 tries give
+16 refused, 11 undetermined and no call. It costs right calls, 53 to 24 on the naves and flat
+most of all, and that is taken, since undetermined states what one picture can say.
+
+It lessens wrong calls and does not end them. The wrong ones at 1 were a flat family read −.87
+±.3 at −8° and −.45 ±.22 at 10°, and a half-bay family read .01 ±.12 at 4°, and the first is
+left at 2. So `off` is still not a true error bar, only what can be measured from one picture.
+
+Selfcheck's frame loses the vault past 15° of tilt (5 or 2 curves at 25°, none at 34°), and
+7 looks up about 34°. So a drawn nave was framed as 7 is, F 2977 and 2000 px, in scratch and
+not as a row. Run of a family, both sides, true uprights against those that are wrong:
+
+| tilt | drawn run | true uprights | (far) | none |
+|---|---|---|---|---|
+| 15° | 0 | flat .06 ±.05, undetermined .14 ±.1 | undetermined −.35, −.2 | 3D −.85, −.61 |
+| 25° | 0 | flat .03 ±.02, undetermined .11 ±.04 | 3D −.89, −.93 | refused |
+| 34° | 0 | flat .02 ±.01, .04 ±.03 | refused | refused |
+| 15° | 1 | 3D .83 ±.24, 1.08 ±.25 | undetermined .47, 3D .74 | undetermined .04, .33 |
+| 25° | 1 | 3D .81 ±.21, 1.11 ±.11 | undetermined .14, .24 | undetermined −.23, −.23 |
+| 34° | 1 | 3D .71 ±.07, undetermined .68 ±.3 | undetermined −.16, 3D −.4 | undetermined −.5, 3D −.95 |
+
+"Far" is a point on the line of the true one, as the false uprights on 7 are. Under true
+uprights no call is wrong: flat reads flat or undetermined, a run of 1 reads 3D but for one
+family at 34°, reading a fifth to a third low there. The wrong uprights turn flat into 3D, or
+refuse.
+
+The run limit earns its place. Without it, wrong points read 31 times in 120 where they read
+14, 12 firm against 5. Drawn runs of 2 and 3 bays are called 3D 8 times where they were called
+nothing.
+
+### 54.5 The point, when no line gives one
+
+6 and 7 have no line to their point. So `/api/detect` takes `along`, a selected family's
+lines, and the page sends them, click runs as chords. The card asks for them when 20
+curves or more have no point: "Mark 3 lines running down it as a line family, select that
+layer and Detect edges again."
+
+This found three faults, each of which hid behind the others.
+
+- The route rebound `along` to a family's name further down, so marks gave the point and
+  then went unused: "with 2 lines through it", from 3 marked. They are `marked` now.
+- A marked point has no detected family behind it, so the guess was told no axis and took
+  a triple: 3-point on 7, with (−823, 1433) as its uprights. The rays then bent the wrong
+  way and nothing read. The marks now go to the guess as the family `along` names (§52.5),
+  and it is left out of what Take adds, since the page has it.
+- With the marks in, the route asked only whether a detected family had lines through the
+  point. The few of 7's shafts near the ridge are on a line with N and the uprights' point,
+  so the shafts were named the axis, and the guess took the ribs' 113 near-vertical pieces
+  as uprights: "1-point", V at (923, −19697). Those pieces lean 2.5° where the shafts lean
+  7.7°. Now a family is the axis only if most of what runs to the point is in it and most of
+  it runs there. Share of the named family's own lines on the point: 2 .81, 8 1.0, Worcester
+  1.0, 7 .01. 7 reads 3-point, with the shafts' 228 lines as uprights at (615, −3435). Split
+  left, middle and right they give (647, −3741), (615, −3186) and (495, −4463), one point
+  within their spreads, so the convergence is real and the tilt about 34°.
+
+The spread is `V.drawn`, the resampling `fit_vp` already did, lifted into `core/vp.py`
+for both. Three lines can agree by luck and say ±0, so 1 px goes back on each end
+(`LINE_PX`). Three long lines to 7 then say (±5, ±41), and to 6 (±7, ±2).
+
+On 6 no flat or 3D call comes out of any of it, which is the honest answer from 3 lines:
+in 6 draws of 2 px on each end 5 stay undetermined and 1 is refused, and ±10 px moves a run
+from .03 to .6.
+
+Reading a vault inside a 5-point picture is not built. The copy law needs straight rays,
+so a picture claimed as 5-point says why, and 9 unclaimed asks for lines and then refuses:
+"too few of the curves follow the vault, and nothing repeats along it at one bay".
+
+### 54.6 What 7 is, and what a count cannot say
+
+7 was the hard one, and it was misjudged twice from counts before it was looked at.
+
+Under the true uprights §53's rule took 13 to 21 of about 60 curves. Under the false ones it
+had taken 38 of 67, and with no uprights 45 of 67. That read as true uprights doing worse, an
+open fault, and it was not explained by the drawn nave, where they do better. Next a gate
+was built on the share of curves the rule takes, set at .7 between the true reads (drawn
+naves .83 to 1.0, Worcester .80 to .92) and 7's .20 to .34, with a row, and 7 went tidily to
+four undetermined families. Both were wrong. The gate and its row are gone.
+
+What settled it was drawing the rule on the picture. On 7 under the true uprights it stands
+on the vault: crowns on the transverse ribs, 3D crowns on the bosses, diagonals on the
+diagonals. So 7 has §53's plan. Along the ridge, by eye on a strip at full size, the carved
+bosses are at y ≈ 335, 712, 975, 1195, 1365 and the rule's 3D crowns, the mean of the two
+sides, at 350, 705, 976, 1190, 1363, within 15 px over a span of 1000. The carved bosses went into no
+fit, so this is a check and not a result of one. The transverse crowns stand as near: by eye
+115, 530, 840, 1080, 1275, by the rule 123, 536, 845, 1086, 1278.
+
+| uprights | on the rule | by chance | ratio | half bay, of the nearest rib's depth |
+|---|---|---|---|---|
+| true | 21 of 60 | 7 | 3.0 | .179 |
+| (923, −19697) | 38 of 67 | 14 | 2.7 | .104 |
+| none | 45 of 67 | 21 | 2.1 | .091 |
+
+All three put the crowns within about 10 px of each other, so the crowns do not choose among
+them. The count does not either. Wrong uprights shrink the depth scale, the ribs crowd, each
+curve lies near more ribs of the rule, and chance climbs with the count. On/chance is best
+under the true ones, as on the drawn nave framed as 7: 41 of 41 with 19 by chance, 37 of 41
+with 25, 37 of 41 with 27.
+
+The share is low for a plain reason. 7's ribs are moldings with several edges. Of the 60
+curves 21 are within the 21 px limit of a rib of the rule, 30 within 32 px and 53 within 43
+px. So a curve off the rule proves nothing: it is another edge of the same rib, or a wall
+rib, or tracery. What proves something is the mirror, a rib of the rule that is not there.
+
+8 is the case for that. Refused at its own point, the rule held at 3 of 15 points within
+±30, ±40 px of it, with up to 22 of 29 curves on it. That is a better share than 7's true rule,
+and it is false: 137 ribs at a half bay of .06 on a fan vault, a comb fine enough to reach
+anything. Share of the rule's own ribs in sight that are found (`RULE_SEEN`):
+
+| | found, of its ribs in sight |
+|---|---|
+| drawn naves, 8 tilts, 4 eyes | .45 to .78 |
+| drawn, bays uneven | .55 to .77 |
+| drawn, about a quarter of the ribs left out | .48 to .57 |
+| drawn, about half left out | .33 to .50 |
+| Worcester within ±30, ±40 px | .48 to .66 |
+| 7 within ±30, ±40 px | .36 to .59 |
+| **false:** 8 within ±30, ±40 px | .08 to .14 |
+| **false:** 2 at (122, 2621), a rule on a barrel | .22 |
+| wrong point, Worcester (110, 1572) | .32 |
+| wrong points, 7 (661, 3386) and (497, 3031) | .43, .29 |
+
+The gate is at .3. A refused rule falls through to `repeats`, so a false refusal costs the
+ribs the rule would add, and a false rule costs a wrong vault on the page.
+
+The rule on 7 is not steady. Moved ±40 px across and ±200 down from (666, 3000), and in 6
+draws of 2 px on each end:
+
+15 points: the rule at 10, families at 5. 6 draws: the rule at 4, families at 2. The rule's own
+count moves with it, 14 to 19 of 56 to 61 at those points, and the ribs built with it, 28 to 34.
+
+Three gates turn it away, each by a hair. At (655, 3000) the crowns repeat every .184 where
+the rule needs .172, past `PEAK_APART`. At (666, 3000) the fit settles on 10 of 56 with 4 by
+chance. At (670, 3000) no section comes. Points under a pixel apart differ: (659, 2999)
+holds at 20 of 60, and (658.6, 2998.6) does not. Where the rule is refused `repeats` reads the
+families, and 7 gets a read either way.
+
+Those reads are less sure than `off` says. At (680, 3000), where the rule holds and `repeats`
+was asked directly, they are all right: transverse flat, −.13 ±.05, .08 ±.04 and −.02 ±.05,
+and the diagonals 3D, −.83 ±.2, 1.14 ±.32 and .73 ±.45. That point was picked by looking at
+the runs, so it shows only that a consistent reading exists. At (666, 3000), 6 px from the
+ridge's line, the right transverse ribs read .29 ±.06. The diagonals run half a bay by the rule,
+and read .55 to 1.14. `off` knows how far the lines let the point move, not where it is.
+Two `off` clear (§54.4) leaves that .29 undetermined, and does not cover every case: in the
+draw at (670, 2983) the left transverse ribs, whose crowns stand on 115, 530, 817, 1100, 1279,
+read .44 ±.05 and are called 3D, which is wrong. The right ones read .30 ±.05, the same sign,
+so the point sideways is not the cause and a mirror check would not have caught it. Moved down
+to (666, 3200) and (686, 3200) the right ones read 0 ±.06 and 0 ±.03, 200 px where the lines
+say ±41. Whether the point's height or the uprights are out is not settled.
+
+### 54.7 What it gives
+
+`read` is the whole order: §53's path where its rule holds, what repeats otherwise, and why
+neither. Through the route, seconds included:
+
+| | s | read |
+|---|---|---|
+| Worcester | 6.1 | §53's rule: 11 flat, 22 3D, 46 built, 27 found |
+| 2 | 2.9 | one family flat, −.10 ±.02, about (687, 1230) (±1, ±2) |
+| 6, 3 lines | 1.3 | one family undetermined, .18 ±1.58, 11 of 12 found |
+| 7, 3 lines | 13 | §53's rule, 17 of 60, 6 by chance, 28 built, 14 found |
+| 7, the same lines a pixel or so away | 11 | families: 2 3D, 3 undetermined |
+| 8 | 6.0 | undetermined, with the reason |
+| 8, 3 lines | 7 to 10 | refused 16 times in 27, a family left undetermined 11 |
+| 9 | 1.6 | asks for lines; claimed 5-point, says why not |
+| 3, 4, 5, 10, 11 | up to 1.3 | nothing |
+
+3 lines on 9, 11, 3 and 5 take 1 to 3 s and give the reasons in §54.1 and §54.5.
+
+On the drawn naves a barrel reads flat at its drawn bay within .02, ribs running half a bay
+at every boss read 3D, and bays at random read nothing. A vault of another pattern can now
+be built, ribs found and any one missed between two, and only those: the rule adds no others.
+
+### 54.8 False reads
+
+Wrong points are drawn uniformly over the frame and 30 % beyond it, with 3 lines through each
+at 2 px, and read under the picture's own uprights.
+
+| | wrong points | reads | firm |
+|---|---|---|---|
+| 2 | 24 | 1 | 1 |
+| 6 | 24 | 0 | 0 |
+| 7 | 24 | 5 | 3 |
+| 8 | 24 | 2 | 0 |
+| Worcester | 24 | 6 | 1 |
+| | **120** | **14** | **5** |
+
+Of no vault: 9 pictures by themselves read nothing, and with each family's 3 longest lines as
+the axis, 38 tries, 1 read and none firm.
+
+Firm is a family called flat or 3D, a rule or a sort. 2 and Worcester's are a sort with no
+rule. 7 is the weak one: 2 of its 3 are rules, at (661, 3386) and (497, 3031), which is what
+§53's plan on 60 curves of moldings allows. Before `CALL_CLEAR` the total was 10 firm, and
+before `RULE_SEEN` 2 had a rule at (122, 2621) as well. Rounding a point to a whole pixel changes these: on 7
+(497, 3031) goes to families and (157, 2398) reads. The no vault read is 5.jpg at (3429, 837), a
+family left undetermined. Every one of these comes only from lines the user marked to a wrong
+point, none unasked.
+
+### 54.9 The page
+
+Launched by `run_mac.command` on a spare port, on the final code. Console clean throughout.
+
+- 2: Detect edges, 4.1 s. "Flat ribs: 11", **build 11**, "11 ribs found, 0 added between them
+  (dashed)". That line said "The whole vault … added by the rule" until 8 showed it: `repeats`
+  deduces no rule and reads a family, not a vault, so the card no longer says so.
+- 6, three lines dragged at fit: (112, 308) (±7, ±2), .40 ±2.55, "Either: 11 ribs that could be
+  flat or 3D", **build 12**.
+- 7, three lines dragged at fit: 13.3 s, 3-point, (659, 3001), "Flat ribs: 2", "3D ribs: 15",
+  17 of 60, 6 by chance, 13 px at the median, 18 at worst, a boss left out missing by 17 px,
+  the crowns within 5 %. **build 28** makes "Flat ribs of the vault" and "3D ribs of the vault",
+  14 found and 14 added, and they stand on the vault by eye. Undo takes both off and `build 28`
+  comes back, and redo restores them. A drag some 4 px away had given 20 of 60, 7 by chance,
+  `build 34`, so the page is where §54.6's unsteadiness shows.
+- 8, three lines to about (554, 2510), twice: first (553, 2525) (±2, ±12), −.56 ±.24, "Either: 9
+  ribs", **build 10**, 9 found and 1 added. Then, a few px away, undetermined with the reason.
+- 9 claimed as 5-point: "a vault is read by moving its ribs along straight rays from one point,
+  and in 5-point those rays bend".
+- Worcester: 7.2 s, 1-point, flat 11, 3D 22, **build 46**, 27 found and 19 added, 36 of 41, as §53.
+
+### 54.10 What the rows caught
+
+23 deliberate breaks, each on a copy, against the vault's rows. 20 failed a row at once:
+chance counted over one period, always the shortest period, the window ignored, too few
+teeth let through, `off` ignoring the point, `off` ignoring everything, a call made with no
+spread, no hand on the lines, the bay in the wrong unit, the chance limit gone, no tooth
+reach, the stretch rule off, 5-point read anyway, no hint, §53 not tried first, marks not
+given to the reader, marks not the axis of the guess, marks offered back, marks ignored for
+the point, and a bad `along` crashing.
+
+Three passed unseen, and each changed something. The run limit looked dead, was measured
+(§54.4), kept, and now has a row of ribs running two bays. Snapping to teeth looked
+pointless on drawn naves, was measured on real ones (§54.3), kept, and is tested directly on
+`_family`. The tilt was the sly one: with `repeats` ignoring it, `_run` still used it, so
+`off` grew and the verdict held. So the row compares the run itself, .35 by the uprights
+against .62 without.
+
+Three more have rows: the axis test of §54.5, which fails 2 rows put back as it was, `RULE_SEEN`,
+which fails its row at 0, and `CALL_CLEAR`, which fails its row at 1. That row was "and without
+them one is", a flat family tipped 7° with no uprights called 3D, and it now says the opposite. The rows from §54.5's faults are that a read from marks
+counts the marks, that lines agreeing exactly still leave the point a spread, and that an
+upright through the marked point leaves the marks the axis and the uprights the uprights.
+
+Corrected from §53, which stands as written: its closing "not built: uneven bays" is wrong,
+since by §53.2 4 of 12 uneven naves hold, built as the nearest regular vault. Its "No other
+pattern is tried" no longer holds. And its gate of chance alone let a rule through on a fan
+vault, which `RULE_SEEN` now stops.
+
+Not built: a vault in 5-point, fan vaults, ribs other than by their copies, a check that
+mirror families read one run, which is what a family on one side lacks, wall ribs and the
+ridge, and a plan. The user's marks, when they
+come, would score everything here that says "by eye".
+
+**939 passed, 0 failed.**

@@ -111,6 +111,21 @@ def fit(s, idx=None):
     return np.linalg.svd(_weighted(s, idx))[2][-1]
 
 
+def drawn(s, jit=0.0):
+    """The point of segments `s` over 200 resamples of them, `jit` px put back on each end."""
+    out = []
+    if len(s) >= 3:
+        rng = np.random.default_rng(0)
+        for _ in range(200):
+            k = rng.integers(0, len(s), len(s))
+            if len(np.unique(k)) < 2:
+                continue
+            w = fit(s[k] + rng.normal(0.0, jit, (len(k), 4)) if jit else s[k])
+            if abs(w[2]) > 1e-12:
+                out.append(w[:2] / w[2])
+    return out
+
+
 def _weighted(s, idx=None):
     """Each segment as a line, scaled by its length so long marks count more."""
     s = np.asarray(s, float)
@@ -271,7 +286,7 @@ def _homog(s):
     p2 = np.c_[s[:, 2:], np.ones(len(s))]
     return np.cross(p1, p2)
 
-def vps(s, size, n=3, tol=1.5, iters=3000, min_inl=4, floor=0.7, seed=0):
+def vps(s, size, n=3, tol=1.5, iters=3000, min_inl=4, floor=0.7, seed=0, known=None):
     """Sequential RANSAC. Returns [(vp, inlier_mask)]; leftovers stay unassigned.
 
     Lines are sampled and scored by their length, not one vote each, and the
@@ -280,14 +295,18 @@ def vps(s, size, n=3, tol=1.5, iters=3000, min_inl=4, floor=0.7, seed=0):
     was, never offered the ten 166-255 px pole edges of shadowtest.png, 1.2
     diagonals of line. On 40 synthetic pictures the floor of 0.7 took the
     families matching no vanishing point from 18 to 5 and lost one of 105
-    found. Each refit is weighted by length, as a marked family's is.
+    found. Each refit is weighted by length, as a marked family's is. A `known`
+    point, already found some other way, starts the list with the lines on it.
     """
     rng = np.random.default_rng(seed)
     L = _len(s)
     floor *= float(np.hypot(*size))
     free = np.ones(len(s), bool)
     out = []
-    for _ in range(n):
+    if known is not None and (resid_deg(s, known) < tol).sum() >= min_inl:
+        free = resid_deg(s, known) >= tol
+        out.append((known / (np.linalg.norm(known[:2]) or 1), ~free))
+    for _ in range(n - len(out)):
         idx = np.flatnonzero(free)
         if len(idx) < min_inl: break
         H = _homog(s[idx])

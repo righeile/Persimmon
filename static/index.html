@@ -80,6 +80,12 @@
           <option value="five">5-point &mdash; curvilinear, straight edges drawn as arcs</option>
         </select>
       </div>
+      <div class="row wrap">
+        <button class="small ghost" id="btnUpright" title="Turn the picture to this type: the horizon level, the uprights parallel, and in 1-point the wall facing you. Measured from the marked families, with the uprights flagged. The marks move with it and the file is not touched.">Straighten</button>
+        <select class="small hidden" id="uprightFace" title="In 1-point one family runs straight into the picture and the wall across it faces you. This says which."></select>
+        <a class="btn small ghost hidden" id="btnPicSave" title="Save the picture as shown, as a PNG. The file it came from is not touched.">Save picture</a>
+      </div>
+      <div class="why" id="uprightState"></div>
     </div>
 
     <div class="panel">
@@ -118,6 +124,7 @@
           <label class="dim" title="Fills the settings below with values measured for that kind of picture. Changing one by hand makes them your own.">picture <select id="detPreset" class="small">
             <option value="1.5,3,0.7,1.5" title="Drawn or painted by eye. The measured defaults.">freehand</option>
             <option value="0.75,2,0.7,3" title="Straight edges drawn true, with a ruler or by a program. Finds more of their vanishing points, with fewer chance groupings.">ruled or rendered</option>
+            <option value="0.75,3,0.7,1.5" title="A photograph of a room or a building, where a patterned floor or wall crowds the lines. Holds lines tight to their point and merges as freehand does.">photograph</option>
             <option value="1.5,3,0.5,1.5" title="Some vanishing points are held by only a few lines, such as shadows. Offers those smaller families too, and more chance groupings with them.">sparse</option>
             <option value="" disabled title="A setting has been changed by hand.">your own</option>
           </select></label>
@@ -164,6 +171,7 @@
       <input type="color" id="colMoves" value="#ff2d55" title="Colour of the correction lines. The reference camera's stay violet.">
 
       <label class="chk" title="The drawing seen from above: the eye, the picture plane, and a ray to each vanishing point. Shown once there is a horizon."><input type="checkbox" id="showPlan" checked> top&nbsp;view</label>
+      <label class="chk" title="Hide the picture to see the marks and any built vault alone."><input type="checkbox" id="showPicture" checked> picture</label>
       <label class="chk"><input type="checkbox" id="showCand" checked> detected</label>
       <button class="small ghost" id="btnFit">Fit</button>
       <span class="dim" id="zoomLbl">100%</span>

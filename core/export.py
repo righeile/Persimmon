@@ -159,6 +159,13 @@ def pdf(doc, image=None):
                 q = np.asarray(L["pts"], float)
                 ax.plot(q[:, 0], q[:, 1], ls="none", marker="o",
                         ms=LW_PT * 2.4, color=c)
+        elif kind == "pattern":
+            for q, shade in zip(L.get("polys") or [], L.get("shaded") or []):
+                ax.add_patch(Polygon(q, closed=True, fill=shade, ec=c, fc=c,
+                                     alpha=0.35 if shade else 1.0, lw=lw * 0.5))
+            if L.get("pts"):
+                p = np.asarray(L["pts"], float)
+                ax.plot(p[:, 0], p[:, 1], ls="none", marker="o", ms=LW_PT * 2.4, color=c)
         elif kind in POLY_KINDS:
             for run in (L.get("pts") or [], L.get("far") or []):
                 if not run:
@@ -169,6 +176,10 @@ def pdf(doc, image=None):
                 ax.plot(p[:, 0], p[:, 1], color=c, lw=lw)
                 ax.plot(p[:, 0], p[:, 1], ls="none", marker="o",
                         ms=LW_PT * 2.4, color=c)
+        elif kind == "vault":
+            for r in L.get("ribs") or []:
+                p = np.asarray(r["pts"], float)
+                ax.plot(p[:, 0], p[:, 1], color=c, lw=lw, ls="-" if r["found"] else (0, (4, 3)))
         elif kind in PAIR_KINDS:
             for q in L.get("pairs") or []:
                 p = np.asarray(q, float)

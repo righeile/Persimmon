@@ -28,7 +28,7 @@ Two numbers decide whether a disagreement is real at all:
 """
 from __future__ import annotations
 
-from itertools import permutations
+from itertools import combinations, permutations
 
 import numpy as np
 from scipy.optimize import least_squares
@@ -273,6 +273,9 @@ def _seeds(segs, w, h):
         if len(c) < len(drawn):
             continue
         M = np.c_[tuple(c)] if len(c) == 3 else np.c_[c[0], c[1], np.cross(c[0], c[1])]
+        # a vanishing point has no sign. Left-handed as they came, half the
+        # time, the nearest rotation below is nowhere near them
+        M[:, 2] *= np.sign(np.linalg.det(M)) or 1.0
         U, _, Vt = np.linalg.svd(M)
         R = U @ np.diag([1.0, 1.0, float(np.linalg.det(U @ Vt))]) @ Vt
         out.append((float(np.log(f)), Rotation.from_matrix(R).as_rotvec()))
@@ -883,10 +886,13 @@ def fit(families, *, image_size=None, pp_fixed=None, free_pp=True,
     # world's three directions in the camera frame, a row per axis in V's
     # order. Only under a measured lens -- K^-1 applied to a vanishing point
     # means nothing when f was the solver's starting guess.
-    if cond["focal_px"] is not None:
+    if f is not None:
         Kc = np.array([[f, 0, pp[0]], [0, f, pp[1]], [0, 0, 1.0]])
         A = np.linalg.solve(Kc, V.T).T
-        cond["axes_cam"] = (A / np.linalg.norm(A, axis=1, keepdims=True)).tolist()
+        # a roll needs no lens, so `stand` can use these when axes_cam is withheld
+        cond["fitted_axes"] = (A / np.linalg.norm(A, axis=1, keepdims=True)).tolist()
+        if cond["focal_px"] is not None:
+            cond["axes_cam"] = cond["fitted_axes"]
 
     finite = [p for p in (_vp_xy(V[a], dg) for a in axes) if p is not None]
     # Not when the lateral pin is in force: that case already reported its own
@@ -928,6 +934,224 @@ def fit(families, *, image_size=None, pp_fixed=None, free_pp=True,
         return {"value": value, "verdict": "already consistent",
                 "conditioning": cond}
     return {"value": value, "verdict": "rectifiable", "conditioning": cond}
+
+
+def stand(families, *, image_size, roles=None, pp=None):
+    """The camera a picture is stood up on, or a refusal.
+
+    Two or three families are one camera: the flagged vertical and the next
+    two in the order given. The centre of vision is taken at the middle of the
+    frame unless that costs a line more than a mark, because on rooms with a
+    known camera (PLAN.md section 51) the free fit took 2 to 8 s against
+    0.03 s, and pinned the better lens. A crop is what breaks the pin, and
+    then the free fit is worth its time. The third of a mark sits between the
+    worst line on those rooms uncropped, 1.0 px, and cropped, 3.2 to 4.6. A
+    picture already stood up says where its centre of vision went, as `pp`.
+
+    Returns {fit, K, axes, up, pinned, measured}: `axes` are the room's
+    directions in the camera, rows in the fit's order, and `up` the row that is
+    upright: the flagged family's, else the one running nearest the picture's
+    vertical. `pinned` says the centre of vision was assumed, and `measured`
+    whether the lens was; a roll does not need it.
+    """
+    roles = roles or {}
+    names = sorted(families, key=lambda n: roles.get(n) != "vertical")[:3]
+    fam = {n: families[n] for n in names}
+    r = fit(fam, image_size=image_size, free_pp=False, pp_fixed=pp)
+    c = r.get("conditioning") or {}
+    pinned = True
+    if len(names) == 3 and c.get("worst_move_px", 0) > c.get("mark_accuracy_px", np.inf) / 3:
+        r = fit(fam, image_size=image_size)
+        c = r.get("conditioning") or {}
+        pinned = "pp_assumed" in c
+    if "fitted_axes" not in c:
+        return {"fit": r, "K": None}
+    f = c["focal_px"] or c["focal_fitted_but_unmeasured"]
+    A = np.array(c["fitted_axes"])
+    flagged = [n for n in names if roles.get(n) == "vertical"]
+    up = c["per_family"][flagged[0]]["axis_index"] if flagged else int(np.argmax(np.abs(A[:, 1])))
+    return {"fit": r, "axes": A, "up": up, "pinned": pinned,
+            "measured": c["focal_px"] is not None,
+            "K": np.array([[f, 0, c["principal_point"][0]],
+                           [0, f, c["principal_point"][1]], [0, 0, 1.0]])}
+
+
+SQUARE_DEG = 6.0      # three vanishing points a lens makes square to within this
+
+
+def _horizon(a, b, up):
+    """The image line through horizontal vanishing points, positive below it.
+
+    Two give it outright; one and the uprights give it through that point,
+    square to the uprights there. None when nothing places it.
+    """
+    a = np.asarray(a, float)
+    l = np.cross(a, np.asarray(b, float)) if b is not None and abs(a[2] * b[2]) > 1e-12 else None
+    if l is None and up is not None:
+        v = a if abs(a[2]) > 1e-12 else b
+        if v is None or abs(v[2]) < 1e-12:
+            return None
+        p, u = v[:2] / v[2], np.asarray(up, float)
+        d = u[:2] if abs(u[2]) < 1e-12 else u[:2] / u[2] - p
+        l = np.array([d[0], d[1], -(d @ p)])
+    if l is None or np.hypot(*l[:2]) < 1e-12:
+        return None
+    return (l if l[1] > 0 else -l) / np.hypot(*l[:2])
+
+
+def places(families, horizon):
+    """Each family's place by where its line lies against the horizon: `floor`
+    with nine parts of ten below it, `ceiling` above, `wall` across it. Only
+    walls cross eye level, so a family held entirely on one side is lying on
+    that surface and tells nothing of the room."""
+    out = {}
+    for n, q in families.items():
+        q = np.asarray(q, float).reshape(-1, 4)
+        ends = np.stack([q[:, :2], q[:, 2:]], 1)
+        side = ends @ horizon[:2] + horizon[2]
+        L = np.hypot(*(q[:, 2:] - q[:, :2]).T)
+        below = L[(side > 0).all(1)].sum() / L.sum()
+        above = L[(side < 0).all(1)].sum() / L.sum()
+        out[n] = "floor" if below >= 0.9 else "ceiling" if above >= 0.9 else "wall"
+    return out
+
+
+def guess(families, vps, *, image_size, pp=None, along=None):
+    """The simplest perspective detected families can be read as.
+
+    Offered, like the detection under it, and used only when taken. Three
+    families a lens makes square are read first: that needs no notion of which
+    way is up, so a parquet heavier than the uprights cannot be taken for them.
+    Of those, the three whose horizon the most line lies on, because a chance
+    grouping meets off it alone. Against that horizon each family has a place,
+    and the room's own horizontals are the heaviest square pair of walls, or
+    else of floors. Then the cheapest type that moves no line more than a
+    mark, because a picture is not 3-point for being able to be.
+
+    `families` are lines by name and `vps` their homogeneous vanishing points.
+    The centre of vision is taken at the middle of the frame, or at `pp`.
+    `along` names a family known to be level and to run down the view, the axis
+    of a vault: its ribs say so, and that outweighs however much else there is.
+    """
+    names = [n for n in families if len(families[n])]
+    mark, diag = _mark_px(image_size)
+    if len(names) < 2:
+        return {"value": None, "verdict": "undetermined",
+                "why": f"{len(names)} line families; two are needed to say anything",
+                "conditioning": {"families": len(names)}}
+    centre = np.array(pp if pp else (image_size[0] / 2, image_size[1] / 2), float)
+    span = {n: np.asarray(families[n], float).reshape(-1, 4) for n in names}
+    span = {n: q[:, 2:] - q[:, :2] for n, q in span.items()}
+    mass = {n: float(np.hypot(*d.T).sum()) for n, d in span.items()}
+
+    # the height of the centre of vision is left free: a level camera's sits
+    # on the horizon, which a low one puts near the foot of the frame
+    lens = np.geomspace(0.3, 4.0, 64)[:, None] * diag
+    ys = np.array([centre[1]]) if pp else np.linspace(-0.25, 1.25, 31) * image_size[1]
+    def square(group):
+        """(degrees the worst pair misses square, the one running most upright
+        in the picture, and the lens and height that came closest)."""
+        v = np.array([vps[n] for n in group], float)
+        d = np.empty((len(ys), lens.size, len(v), 3))
+        d[..., 0] = v[:, 0] - centre[0] * v[:, 2]
+        d[..., 1] = v[:, 1] - ys[:, None, None] * v[:, 2]
+        d[..., 2] = lens * v[:, 2]
+        d /= np.linalg.norm(d, axis=-1, keepdims=True)
+        c = (np.abs(d @ d.swapaxes(-1, -2)) - np.eye(len(v))).max((-1, -2))
+        i, j = np.unravel_index(np.argmin(c), c.shape)
+        return (float(np.degrees(np.arcsin(np.clip(c[i, j], 0, 1)))),
+                d[i, j][int(np.argmax(np.abs(d[i, j][:, 1])))], (float(lens[j, 0]), float(ys[i])))
+
+    # the real horizon passes through every horizontal the room has, and a
+    # chance grouping of cornices with floor lines meets off it alone
+    def held(group):
+        """The families on the horizon `group` implies, and which of `group` is up."""
+        up, at = square(group)[1:]
+        v = np.array([vps[n] for n in names], float)
+        d = np.c_[v[:, 0] - centre[0] * v[:, 2], v[:, 1] - at[1] * v[:, 2], at[0] * v[:, 2]]
+        off = dict(zip(names, np.abs(d @ up) / np.linalg.norm(d, axis=1)))
+        return [n for n in names if off[n] <= np.sin(np.radians(3.0))], max(group, key=off.get)
+
+    triples = [(sum(mass[n] for n in held(g)[0]), sum(mass[n] for n in g), g)
+               for g in combinations(names, 3) if square(g)[0] <= SQUARE_DEG]
+    on = names
+    if triples and along is None:
+        group = max(triples)[2]
+        on, up = held(group)
+        picked = [n for n in group if n != up]
+    else:
+        steep = [n for n, d in span.items() if
+                 np.median(np.degrees(np.arctan2(*np.abs(d).T))) < 30]
+        up = max((n for n in steep if n != along), key=mass.get, default=None)
+        rest = sorted((n for n in names if n != up), key=lambda n: (n != along, -mass[n]))
+        picked = rest[:1 if up is not None else 2]
+
+    other = vps[picked[1]] if len(picked) > 1 else None
+    line = _horizon(vps[picked[0]], other, None if up is None else vps[up])
+    place = places({n: families[n] for n in names}, line) if line is not None else {}
+    place.update({n: "off" for n in place if n not in on})
+    if up is not None:
+        place[up] = "upright"
+    # a pattern lies at any angle to the walls, so a wall pairs with a wall and
+    # a floor with a floor: one of each proves nothing, and 45 deg apart they
+    # are square under a lens two and a half times too long
+    heavy = sorted(names, key=mass.get, reverse=True)
+    walls = [n for n in heavy if place.get(n) in ("wall", "ceiling")]
+    for kind in (walls, [n for n in heavy if place.get(n) == "floor"]):
+        pairs = [(mass[a] + mass[b], a, b) for a, b in combinations(kind, 2)
+                 if up is not None and along in (None, a, b) and square((up, a, b))[0] <= SQUARE_DEG]
+        if pairs:
+            picked = list(max(pairs)[1:])
+            break
+    fam = {n: families[n] for n in ([up] if up is not None else []) + picked}
+    roles = {up: "vertical"} if up is not None else None
+
+    # the type is the room's: a parquet is square under any turn of the camera
+    # to the walls, so it can say what the camera is but not how the room lies
+    room = picked if set(picked) <= set(walls) else walls[:1] or picked
+    room = {n: families[n] for n in ([up] if up is not None else []) + room}
+    costs, fits = {}, {}
+    for mode in MODES:
+        fits[mode] = fit(room, image_size=image_size, mode=mode, roles=roles,
+                         free_pp=mode != "three", pp_fixed=pp)
+        costs[mode] = (fits[mode].get("conditioning") or {}).get("worst_move_px")
+    if not any(v is not None for v in costs.values()):
+        return {"value": None, "verdict": "undetermined",
+                "why": fits["three"].get("why") or "the families give no camera",
+                "conditioning": {"families": len(names)}}
+    near = [m for m in MODES if costs[m] is not None and costs[m] <= mark]
+    # uprights and one horizontal fit 1-point for any vanishing point at all,
+    # so with no other family to say so, it has to be in the frame, or the
+    # family has to run parallel on the page
+    if len(room) == 2:
+        n = next(iter(set(room) - {up}))
+        v = np.asarray(vps[n], float)
+        d = v[:2] if abs(v[2]) < 1e-12 else v[:2] / v[2] - centre
+        flat = _move_px(np.asarray(room[n], float).reshape(-1, 4), np.array([d[0], d[1], 0.0]))[0]
+        inside = abs(v[2]) > 1e-12 and (0 <= v[:2] / v[2]).all() and (v[:2] / v[2] <= image_size).all()
+        if not inside and flat.max() > mark and n != along:
+            near = [m for m in near if m != "one"]
+    mode = near[0] if near else min((m for m in MODES if costs[m] is not None), key=costs.get)
+    c = (fit(fam, image_size=image_size, roles=roles, free_pp=False, pp_fixed=pp)
+         if len(fam) != len(room) or set(fam) != set(room) else fits["three"]).get("conditioning") or {}
+    cond = {"vertical": up, "horizontals": picked, "lines": {n: len(span[n]) for n in fam},
+            # what to adopt: a floor's diagonals cannot be drawn in 1-point
+            "take": list(room if mode == "one" else fam),
+            "costs": {m: None if v is None else round(v, 2) for m, v in costs.items()},
+            "mark_accuracy_px": round(mark, 2), "within_a_mark": bool(near),
+            "square_deg": round(square(list(fam))[0], 2) if len(fam) == 3 else None,
+            "pp_assumed": "at the middle of the frame" if pp is None else "where the turn left it",
+            # uprights parallel: the lens and the tip are the frame's middle, assumed
+            "focal_px": None if mode == "one" else c.get("focal_px"), "focal_refused": c.get("focal_refused"),
+            "place": place, "horizon": None if line is None else line.tolist()}
+    if "fitted_axes" in c:
+        A = np.array(c["fitted_axes"])
+        i = c["per_family"][up]["axis_index"] if up is not None else int(np.argmax(np.abs(A[:, 1])))
+        u = -A[i] if A[i][1] > 0 else A[i]
+        cond["roll_deg"] = round(float(np.degrees(np.arctan2(u[0], -u[1]))), 2)
+        if mode != "one":
+            cond["tilt_deg"] = round(float(np.degrees(np.arcsin(np.clip(u[2], -1, 1)))), 2)
+    return {"value": mode, "verdict": f"{MODES.index(mode) + 1}-point", "conditioning": cond}
 
 
 def against_vps(families, vps, *, image_size=None, focal_px=None,

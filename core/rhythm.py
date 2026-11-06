@@ -494,13 +494,18 @@ def conic(pts):
     return C / np.abs(C).max()
 
 
-def conic_resid(pts, C=None):
-    """RMS distance from the marked points to the fitted conic, in pixels."""
+def conic_dist(pts, C):
+    """How far each point is from the conic, in pixels, to first order."""
     p = np.asarray(pts, float).reshape(-1, 2); x, y = p.T
-    if C is None: C = conic(p)
     v = C[0,0]*x*x + 2*C[0,1]*x*y + C[1,1]*y*y + 2*C[0,2]*x + 2*C[1,2]*y + C[2,2]
     gx = 2*(C[0,0]*x + C[0,1]*y + C[0,2]); gy = 2*(C[0,1]*x + C[1,1]*y + C[1,2])
-    return float(np.sqrt(np.mean((np.abs(v) / np.maximum(np.hypot(gx, gy), 1e-12))**2)))
+    return np.abs(v) / np.maximum(np.hypot(gx, gy), 1e-12)
+
+
+def conic_resid(pts, C=None):
+    """RMS distance from the marked points to the fitted conic, in pixels."""
+    if C is None: C = conic(pts)
+    return float(np.sqrt(np.mean(conic_dist(pts, C)**2)))
 
 
 def _cross(u, v):

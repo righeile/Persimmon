@@ -24,6 +24,7 @@
   var KINDS = {
     family:  { draw: 'line', label: 'line family',  blurb: 'Lines that run to one vanishing point. Two make a vanishing point; three or more also measure how well they agree. Click along a line instead of dragging, three points or more, then Enter: that tests whether it is straight, and in 5-point it is how a line is marked.' },
     surface: { draw: 'line', label: 'surface',      blurb: 'A plane: either the two vanishing points that span it, or level with the ground, which gives it the horizon. An arc is read against its own surface -- never the horizon unless it lies flat.' },
+    pattern: { draw: 'poly', label: 'pattern',      blurb: 'A repeat on a floor or a wall: a tile, a brick, a plank. One repeat marked is laid right across its surface as a guide to draw against. Corners marked further along say how far the real thing drifts from a true, even repeat.' },
     arc:     { draw: 'poly', label: 'arc',          blurb: 'A rim that should be circular. Mark round it; below 120 deg of turning its shape is not determined and the check refuses.' },
     ellipse: { draw: 'line', label: 'ellipse',      blurb: 'Circles lying flat on the ground, or in a surface you name. Drag once right across one, the long way, and the ellipse a real circle of that width would cast is drawn for you \u2014 on a horizontal plane the drag is levelled onto the horizon, because that is the one diameter whose image runs parallel to it. Drag again for another: they are all built on the one plane under the one camera, so a row of them agrees with the horizon by construction. To have one you drew MEASURED instead, switch to marking and click round its rim. Or choose "circle in a square" and click inside a cell between two lines of each of two families: the circle inscribed in that square is drawn, and the card beside it says how square the cell is.' },
     arch:    { draw: 'poly', label: 'arches and roofs', blurb: 'Drag the springing line between the two supports and move the top, and the arch a real round or pointed one would cast on that wall is drawn for you. Straight sides make it a roof instead: a gable, and slid back along the depth lines a pitched roof, whose slope vanishing point is then read off the drawing. Drag again for the next bay: an arcade is one layer, every arch on the one wall under the one camera. To have one you drew MEASURED instead, switch to marking and click round it \u2014 the near limb, and the far one if the vault shows it.' },
@@ -33,7 +34,17 @@
     axis:    { draw: 'poly', label: 'axis',         blurb: 'Points along one straight axis, in order.' },
     shadow:  { draw: 'triple', label: 'cast shadows', blurb: "Three clicks an object: where it meets the ground, its top, and the TIP of its cast shadow. Two objects are enough. The rays run to the light, the shadows run along the ground to the light's own foot, and a light stands over its foot \u2014 so the light, its foot and the vertical vanishing point are in one line, for a lamp in the room and for the sun alike. The sun is the case whose foot goes all the way to the horizon, and the check says which it was." },
     pairs:   { draw: 'pair', label: 'landmark pairs', blurb: 'Left then right, for each pair that should be symmetric.' },
+    vault:   { draw: 'none', label: 'vault',        blurb: 'The regular vault the ribs found belong to, built by Detect edges from the rule it deduced. Solid where a rib was found, dashed where the rule adds one.' },
     landmark:{ draw: 'pair', label: 'known size',   blurb: "Base then top, for each thing whose REAL size you know -- a 180 cm figure, a 2 m door. That size turns the camera into the distance from the viewer to it. Mark the base where the thing's own silhouette meets the ground, and mark it as tall on the page as you can: a figure 80 px tall is worth +-29 %, one 30 px tall is refused." }
+  };
+
+  // each repeat, and the three corners of it that say where it lies
+  var MOTIFS = {
+    grid: 'a corner of one tile, then the next corner along each side',
+    checker: 'a corner of one tile, then the next corner along each side',
+    brick: 'a corner of one brick, its far end along the course, then the corner two courses up',
+    herringbone: 'a corner of one plank, its far end along the length, then the next corner across the width',
+    'mirrored herringbone': 'a corner of one plank, its far end along the length, then the next corner across the width'
   };
 
   var COLORS = ['#2ca8ff', '#ffd400', '#ff6b35', '#00e676', '#c77dff',
@@ -190,7 +201,8 @@
       markK: [],
       resolve: 0.05, px_per_mm: '', resolve_mm: 2.0, count: '',
       size: 180, size_unit: 'cm', on_ground: true,
-      span: [0, -1], unit: [0, 1]
+      span: [0, -1], unit: [0, 1],
+      motif: 'grid', ratio: 4
     };
     S.layers.push(L);
     return L;
@@ -332,7 +344,7 @@
     if (KINDS[L.kind].draw === 'pair' || KINDS[L.kind].draw === 'triple') return L.pairs.length;
     if (L.kind === 'arch') return L.pts.length + L.far.length;
     if (L.kind === 'surface') return L.lines.length;
-    if (KINDS[L.kind].draw === 'none') return 0;
+    if (KINDS[L.kind].draw === 'none') return L.ribs.length;
     if (L.kind === 'ellipse') return L.pts.length + L.cells.length;
     return L.pts.length;
   }
@@ -378,7 +390,7 @@
 
     g.imageSmoothingEnabled = S.view.k < 2;
     var o = toScreen([0, 0]);
-    g.drawImage(S.bitmap, o[0], o[1], S.image.w * S.view.k, S.image.h * S.view.k);
+    if ($('#showPicture').checked) g.drawImage(S.bitmap, o[0], o[1], S.image.w * S.view.k, S.image.h * S.view.k);
 
     drawCand(g);
     drawTrim(g, W, H);
@@ -392,6 +404,14 @@
       g.lineWidth = on ? 2.4 : 1.6;
       g.strokeStyle = L.color;
       g.fillStyle = L.color;
+      if (L.kind === 'vault') {
+        L.ribs.forEach(function (r) {
+          g.setLineDash(r.found ? [] : [7, 5]);
+          strokePath(g, r.pts);
+        });
+        g.setLineDash([]);
+        return;
+      }
       if (L.kind === 'surface') {
         var q = surfaceQuad(L);
         if (q) {
@@ -409,6 +429,24 @@
           g.save(); g.setLineDash([5, 5]); g.globalAlpha = 0.7;
           strokeSeg(g, L.lines[0]); g.restore();
         }
+      } else if (L.kind === 'pattern') {
+        var T = patOut[L.id] || {}, tile = function (q) {
+          q.forEach(function (c, i) {
+            var t = toScreen(c);
+            if (i) g.lineTo(t[0], t[1]); else g.moveTo(t[0], t[1]);
+          });
+          g.closePath();
+        };
+        g.save(); g.lineWidth = 1; g.globalAlpha = on ? 0.8 : 0.5;
+        g.beginPath(); (T.polys || []).forEach(tile); g.stroke();
+        g.beginPath();
+        (T.polys || []).forEach(function (q, i) { if (T.shaded[i]) tile(q); });
+        g.globalAlpha *= 0.4; g.fill();
+        g.restore();
+        // the repeat itself: a corner and the next along each side
+        if (L.pts.length > 1) strokePath(g, [L.pts[1], L.pts[0]].concat(L.pts.slice(2, 3)));
+        L.pts.forEach(function (q) { dot(g, q, on ? 4 : 3); });
+        if (showFits) (T.moves || []).forEach(function (m) { strokeSeg(g, m); });
       } else if (L.kind === 'ellipse') {
         // the circle this picture's own camera casts, faint, when it
         // differs: its long diameter leans away from the centre of vision and
@@ -506,7 +544,7 @@
         (L.curves || []).forEach(function (q) { drawRun(g, q, on, false); });
       }
       var run = rowPts(L);
-      drawRun(g, run, on, L.kind === 'polygon' || L.kind === 'ellipse');
+      if (L.kind !== 'pattern') drawRun(g, run, on, L.kind === 'polygon' || L.kind === 'ellipse');
       // the built posts are a guide; only the two ends are anyone's marks
       if (run !== L.pts) L.pts.forEach(function (q) { dot(g, q, on ? 5 : 3.4); });
       var ups = L.kind === 'posts' && rowUprights(L);
@@ -583,6 +621,7 @@
   }
 
   function surfaceVps(L) {
+    if (L.ownVps) return L.ownVps;
     if (L.level) {
       var h = horizonVps(null);
       return h ? [h[0].vp, h[1].vp] : null;
@@ -1040,6 +1079,7 @@
     var how = drawMode(L);
     if (how === 'cell') { L.cells.push(w); fitCells(L, true); return; }
     if (how === 'line') { S.dragLine = { x1: w[0], y1: w[1], x2: w[0], y2: w[1] }; return; }
+    if (L.kind === 'pattern') { L.pts.push(w); refreshLayers(); paint(); return; }
     if (how === 'poly') { S.pending.push(w); S.tracing = true; paint(); return; }
     if (how === 'pair' || how === 'triple') {
       S.pending.push(w);
@@ -1300,7 +1340,9 @@
     busy(true);
     fetch('/api/straighten', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ doc: buildDoc(), feature: L.id, trim: S.trim })
+      body: JSON.stringify({ doc: buildDoc(), feature: L.id, trim: S.trim,
+                             surface: L.kind === 'surface' ? L.id : null,
+                             pts: L.kind === 'surface' ? surfaceQuad(L) : null })
     }).then(function (r) {
       if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || 'failed'); });
       return r.blob();
@@ -1327,15 +1369,22 @@
       var v = parseFloat($(q).value);
       return isFinite(v) ? v : parseFloat($(q).defaultValue);
     }
+    // a family selected here says what point a vault runs to
+    var L = selected();
     post('/api/detect', {
       image: S.image.path, trim: S.trim,
       min_len: parseFloat($('#minLen').value) || 40,
       tol: setting('#detTol'), merge_deg: setting('#detMerge'),
-      floor: setting('#detFloor'), join_pct: setting('#detJoin')
+      floor: setting('#detFloor'), join_pct: setting('#detJoin'),
+      perspective: S.perspective,
+      along: L && L.kind === 'family' && markCount(L) >= 2 ? L.lines.concat(L.curves.map(function (c) {
+        return c[0].concat(c[c.length - 1]);
+      })) : null
     }).then(function (r) {
       if (r.error) { toast(r.error, true); return; }
       S.cand = null;
       if (!r.segments || !r.segments.length) {
+        if ((r.arches || []).length) S.cand = { segs: [], famOf: [], families: [], guess: null, patterns: [], arches: r.arches };
         toast(r.note || 'no straight edges found', true);
         refreshLayers(); paint(); return;
       }
@@ -1351,7 +1400,8 @@
         famOf: r.segments.map(function (q) {
           var k = fam[q.join(',')]; return k === undefined ? -1 : k;
         }),
-        families: r.families || []
+        families: r.families || [], guess: r.guess || null,
+        patterns: r.patterns || [], arches: r.arches || [], ribs: r.ribs || null
       };
       $('#showCand').checked = true;
       var nf = (r.families || []).length;
@@ -1597,6 +1647,29 @@
       .catch(function (e) { L.ringWhy = String(e && e.message || e); showEditor(); paint(); });
   }
 
+  // Derived, and there can be thousands of tiles, so they stay off the layer:
+  // see cellSeq. Asked for by every path that shows a change, and only when
+  // something under them has moved.
+  var patOut = {}, patAsked = {};
+
+  function fitPattern(L) {
+    if (L.kind !== 'pattern') return;
+    var s = L.refs.surface && layer(L.refs.surface), region = s ? surfaceQuad(s) : null;
+    var plane = s ? surfaceVps(s) : (horizonVps(null) || []).map(function (F) { return F.vp; });
+    var key = JSON.stringify([L.pts, L.motif, L.ratio, plane, region]);
+    if (patAsked[L.id] === key) return;
+    patAsked[L.id] = key;
+    if (L.pts.length < 3) { delete patOut[L.id]; return; }
+    post('/api/pattern', { doc: buildDoc(), feature: L.id, region: region })
+      .then(function (r) {
+        if (patAsked[L.id] !== key) return;        // a later answer is on its way
+        patOut[L.id] = r;
+        if (S.sel === L.id) showEditor();
+        paint();
+      })
+      .catch(function (e) { patOut[L.id] = { error: String(e && e.message || e) }; showEditor(); });
+  }
+
   // The circle in a square. The page keeps only where the hand clicked: the
   // cell round that point, the circle in it and how square it is all come
   // back from the server, which has the camera, and are asked for again
@@ -1699,7 +1772,235 @@
       addLine(L, S.cand.segs[i]);
       S.cand.segs.splice(i, 1); S.cand.famOf.splice(i, 1);
     }
+    L.fam = String(fi);
     refreshLayers(); showEditor(); paint(); commit();
+  }
+
+  var PLACE = { upright: 'uprights', wall: 'wall', floor: 'floor', ceiling: 'ceiling',
+                off: 'off the horizon' };
+
+  function guessCard(host, g) {
+    var c = g.conditioning || {}, box = el('div', { className: 'guess' });
+    if (!g.value) {
+      box.append(el('div', { className: 'why', textContent: 'No guess at the type: ' + g.why }));
+      host.append(box);
+      return;
+    }
+    var row = el('div', { className: 'row' }), b = el('button', {
+      className: 'small', textContent: 'Take',
+      title: 'Set the type to this and put the longest lines of these families into layers.'
+    });
+    b.onclick = takeGuess;
+    row.append(b, el('span', { textContent: 'Looks ' + g.verdict }));
+    box.append(row);
+    var cost = [['one', '1-point'], ['two', '2-point'], ['three', '3-point']]
+      .filter(function (m) { return c.costs[m[0]] !== null; })
+      .map(function (m) { return m[1] + ' ' + num(c.costs[m[0]], 1); }).join(', ');
+    box.append(el('div', {
+      className: 'why' + (c.within_a_mark ? '' : ' warn'),
+      textContent: 'The worst line moves ' + cost + ' px; a mark is worth ' + num(c.mark_accuracy_px, 1) +
+        (c.within_a_mark ? '.' : ', and no type comes within that, so this is only the nearest.')
+    }));
+    var tip = c.tilt_deg === undefined ? null : Math.abs(c.tilt_deg);
+    box.append(el('div', {
+      className: 'why',
+      textContent: (c.focal_px ? 'Lens ' + num(c.focal_px, 0) + ' px, with the center of vision ' + c.pp_assumed + '. '
+                               : 'No lens measured. ') +
+        (c.roll_deg === undefined ? '' : 'Rolled ' + num(Math.abs(c.roll_deg), 1) + '\u00b0' +
+         (tip === null ? '.' : ', tipped ' + num(tip, 1) + '\u00b0 ' + (c.tilt_deg < 0 ? 'down' : 'up') + '.'))
+    }));
+    host.append(box);
+  }
+
+  // The longest lines say what the rest would, and every family fit is a request.
+  var GUESS_LINES = 24;
+
+  function takeGuess() {
+    var c = S.cand.guess.conditioning, gone = [];
+    setPerspective(S.cand.guess.value);
+    c.take.forEach(function (n) {
+      var mine = [], len = function (i) {
+        var q = S.cand.segs[i]; return Math.hypot(q[2] - q[0], q[3] - q[1]);
+      };
+      S.cand.famOf.forEach(function (k, i) { if (k === +n) mine.push(i); });
+      if (!mine.length) return;                // hidden as a pattern
+      var L = newLayer('family');
+      L.vertical = n === c.vertical; L.fam = n;
+      if (PLACE[c.place[n]]) L.name = PLACE[c.place[n]] + (L.vertical ? '' : ' ' + n);
+      mine.sort(function (a, b) { return len(b) - len(a); });
+      mine = mine.slice(0, GUESS_LINES);
+      L.lines = mine.map(function (i) { return S.cand.segs[i].slice(); });
+      gone = gone.concat(mine);
+      fitFamily(L);
+    });
+    gone.sort(function (a, b) { return b - a; }).forEach(function (i) {
+      S.cand.segs.splice(i, 1); S.cand.famOf.splice(i, 1);
+    });
+    S.cand.guess = null;
+    refreshLayers(); paint(); commit();
+  }
+
+  // A pattern's lines are kept aside while it is hidden, not flagged where
+  // they lie: everything that reads the offered lines then just has fewer.
+  function hidePattern(p) {
+    if (p.held) {
+      p.held.forEach(function (h) { S.cand.segs.push(h[0]); S.cand.famOf.push(h[1]); });
+      p.held = null;
+    } else {
+      var mine = {};
+      p.segs.forEach(function (q) { mine[q.join()] = true; });
+      p.held = [];
+      for (var i = S.cand.segs.length - 1; i >= 0; i--) {
+        if (!mine[S.cand.segs[i].join()]) continue;
+        p.held.push([S.cand.segs[i], S.cand.famOf[i]]);
+        S.cand.segs.splice(i, 1); S.cand.famOf.splice(i, 1);
+      }
+    }
+    refreshLayers(); paint(); commit();
+  }
+
+  // Its plane comes with it, in two points of its own: the parquet's directions
+  // are nothing to the camera, and no check of the room counts them.
+  function usePattern(p) {
+    var A = newLayer('surface'), B = newLayer('pattern');
+    A.name = p.plane; B.name = p.plane + ' pattern';
+    A.ownVps = p.vps.map(function (v) { return v.slice(); });
+    A.lines = [p.patch.slice()];
+    B.refs.surface = A.id;
+    S.sel = B.id;
+    refreshLayers(); showEditor(); paint(); commit();
+  }
+
+  function patternRow(host, p) {
+    var row = el('div', { className: 'row' }), n = p.families.length;
+    var hide = el('button', { className: 'small ghost', textContent: p.held ? 'show' : 'hide',
+      title: 'Take these lines off the picture and out of the families below, or put them back.' });
+    hide.onclick = function () { hidePattern(p); };
+    var use = el('button', { className: 'small ghost', textContent: 'use',
+      title: 'Make a surface of it, and a pattern layer on that surface ready to mark.' });
+    use.onclick = function () { usePattern(p); };
+    row.append(hide, use, el('span', {
+      textContent: p.plane[0].toUpperCase() + p.plane.slice(1) + ' pattern: ' + p.n +
+        ' line' + (p.n === 1 ? '' : 's') + ' in ' + n + ' direction' + (n === 1 ? '' : 's') }));
+    host.append(row);
+    var says = [];
+    if (p.step_px.length) says.push('Even steps of ' + p.step_px.map(function (v) { return num(v, 0); }).join(' and ') + ' px.');
+    if (p.to_room_deg !== undefined) says.push(num(p.to_room_deg, 0) + '\u00b0 to the room.');
+    if (p.off_deg !== undefined) says.push(num(p.off_deg, 1) + '\u00b0 off level' +
+      (p.off_deg > 3 ? ', so the horizon or the pattern is not what it seems.' : ', which agrees with the horizon.'));
+    if (says.length) host.append(el('div', {
+      className: 'why' + (p.off_deg > 3 ? ' warn' : ''), textContent: says.join(' ') }));
+  }
+
+  // Marked round, as a hand would, so that it is measured and not drawn over.
+  // Its wall comes too if a layer holds that family; the editor names the rest.
+  function useArch(a) {
+    var L = newLayer('arch');
+    S.cand.arches.splice(S.cand.arches.indexOf(a), 1);
+    L.pts = a.pts.map(function (p) { return p.slice(); });
+    var on = a.wall && families().filter(function (F) { return F.fam === a.wall; })[0];
+    if (on) L.refs.wall_vp = on.id;
+    S.archDraw = false; S.sel = L.id;
+    refreshLayers(); showEditor(); paint(); commit();
+  }
+
+  function archRow(host, a) {
+    var row = el('div', { className: 'row' });
+    var use = el('button', { className: 'small ghost', textContent: 'use',
+      title: 'Make an arch layer of it, marked round the curve, ready to be measured.' });
+    use.onclick = function () { useArch(a); };
+    row.append(use, el('span', {
+      textContent: 'Arch: turns ' + num(a.turn_deg, 0) + '\u00b0, ' + num(a.span_px, 0) + ' px across' }));
+    host.append(row);
+  }
+
+  // A vault has dozens of ribs, so they come by family: each one its own arch
+  // layer, in its family's color, ready to be measured.
+  var RIB = { flat: '#35d0ff', '3D': '#ff4fd8', undetermined: '#8a94a6' };
+
+  function useRibs(v) {
+    var R = S.cand.ribs, L;
+    R.ribs.filter(function (r) { return r.verdict === v; }).forEach(function (r, i) {
+      L = newLayer('arch');
+      L.name = (v === 'flat' ? 'Flat' : v) + ' rib ' + (i + 1);
+      L.color = RIB[v];
+      L.pts = r.pts.map(function (p) { return p.slice(); });
+    });
+    R.ribs = R.ribs.filter(function (r) { return r.verdict !== v; });
+    S.archDraw = false; S.sel = L.id;
+    refreshLayers(); showEditor(); paint(); commit();
+  }
+
+  function ruleSays(U) {
+    return 'The rule: bosses half a bay apart, ' + num(U.half_bay * 100, 0) + ' % of the nearest rib\u2019s depth, one flat rib a side ' +
+      'at every other boss and two 3D ribs a side at the rest. ' + U.on + ' of ' + U.of + ' ribs found follow it, where ' + U.by_chance + ' would with their feet anywhere, ' +
+      num(U.miss_px, 0) + ' px off at the median and ' + num(U.worst_px, 0) + ' px at worst. A boss left out and predicted from the ' +
+      'others misses by ' + num(U.held_out_px, 0) + ' px, and the crowns alone repeat within ' + num(U.peak * 100, 0) + ' % of its step.';
+  }
+
+  // The vault the rule gives, a layer a family, so that either can be hidden.
+  function buildVault(U) {
+    var says = U.says || ruleSays(U), L;
+    ['flat', '3D', 'undetermined'].forEach(function (v) {
+      var ribs = U.ribs.filter(function (r) { return r.family === v; });
+      if (!ribs.length) return;
+      L = newLayer('vault');
+      L.name = (v === 'flat' ? 'Flat' : v === '3D' ? '3D' : 'Undetermined') + ' ribs of the vault';
+      L.color = RIB[v];
+      L.says = says;
+      L.ribs = ribs;
+    });
+    U.built = true; U.ribs = [];
+    S.sel = L.id;
+    refreshLayers(); showEditor(); paint(); commit();
+  }
+
+  function ribCard(host, R) {
+    if (R.verdict !== 'sorted' && R.verdict !== 'repeats') {
+      host.append(el('div', { className: 'why', textContent: 'A vault, its ribs not sorted: ' + R.why + '.' }));
+      return;
+    }
+    var of = function (v) { return R.ribs.filter(function (r) { return r.verdict === v; }); };
+    function row(v, says) {
+      var mine = of(v), use = el('button', { className: 'small ghost', textContent: 'use ' + mine.length,
+        title: 'Make an arch layer of each, marked along the rib, ready to be measured.' });
+      if (!mine.length) return;
+      use.onclick = function () { useRibs(v); };
+      var line = el('div', { className: 'row' }), mark = el('span', { textContent: '\u25a0 ' });
+      mark.style.color = RIB[v];
+      line.append(use, mark, el('span', { textContent: says(mine) }));
+      host.append(line);
+    }
+    function percent(r) { return Math.abs(r.run) * 100; }
+    function range(mine) {
+      var a = mine.map(percent);
+      return num(Math.min.apply(null, a), 0) + '\u2013' + num(Math.max.apply(null, a), 0) + ' %';
+    }
+    row('flat', function (m) { return 'Flat ribs: ' + m.length + ', each in one plane across the vault'; });
+    row('3D', function (m) { return '3D ribs: ' + m.length + ', the foot ' + range(m) + ' nearer or further than the crown'; });
+    if (R.says) row('undetermined', function (m) { return 'Either: ' + m.length + ' ribs that could be flat or 3D'; });
+    var U = R.rule, holds = U.verdict === 'holds';
+    if (holds && !U.built) {
+      var added = U.ribs.filter(function (r) { return !r.found; }).length;
+      var build = el('button', { className: 'small ghost', textContent: 'build ' + U.ribs.length,
+        title: R.says ? 'Make these ribs, a layer for each family.' : 'Make the whole vault the rule gives, a layer for each family of ribs.' });
+      build.onclick = function () { buildVault(U); };
+      var line = el('div', { className: 'row' });
+      var counted = (U.ribs.length - added) + ' ribs found, ' + added;
+      line.append(build, el('span', { textContent: R.says ? counted + ' added between them (dashed)' : 'The whole vault: ' + counted + ' added by the rule (dashed)' }));
+      host.append(line);
+    }
+    if (R.says) { host.append(el('div', { className: 'why', textContent: R.says })); return; }
+    var rest = of('undetermined').length;
+    var ratios = ['right', 'left'].filter(function (s) { return s in R.ratio; }).map(function (s) {
+      return num(R.ratio[s], 2) + ' on the ' + s;
+    });
+    host.append(el('div', { className: 'why', textContent: 'Read about the point ' + Math.round(R.point[0]) + ', ' +
+      Math.round(R.point[1]) + ' with ' + R.lines + ' lines through it. Flat is crown to foot ' + ratios.join(' and ') +
+      ', half a bay ' + num(R.half_bay * 100, 0) + ' % of the nearest rib\u2019s depth. The same ribs with no lines in them fit as well ' +
+      num(R.chance * 100, 1) + ' % of the time.' +
+      (rest ? ' ' + rest + ' more ' + (holds ? 'stand off the rule or could be either of two of its ribs' : 'stop short of the crown or read between the two') + ' (gray).' : '') }));
+    host.append(el('div', { className: 'why', textContent: holds ? ruleSays(U) : 'No rule deduced: ' + U.why + '.' }));
   }
 
   function paintCand() {
@@ -1709,6 +2010,14 @@
     if (!S.cand) return;
     var L = selected();
     var offered = 0;
+    var place = {};
+    if (S.cand.guess) {
+      guessCard(host, S.cand.guess);
+      place = (S.cand.guess.conditioning || {}).place || {};
+    }
+    (S.cand.patterns || []).forEach(function (p) { patternRow(host, p); });
+    if (S.cand.ribs) ribCard(host, S.cand.ribs);
+    (S.cand.arches || []).forEach(function (a) { archRow(host, a); });
     S.cand.families.forEach(function (f, fi) {
       var left = S.cand.famOf.filter(function (k) { return k === fi; }).length;
       if (!left) return;                       // all of it has been taken
@@ -1725,7 +2034,8 @@
       row.append(b);
       row.append(el('span', {
         className: 'dim',
-        textContent: (f.at_infinity ? 'parallel'
+        textContent: (PLACE[place[fi]] ? PLACE[place[fi]] + '  ' : '') +
+                     (f.at_infinity ? 'parallel'
                       : 'vp ' + Math.round(f.vp[0]) + ', ' + Math.round(f.vp[1])) +
                      '  median ' + num(f.median_len_px, 0) + ' px'
       }));
@@ -1861,6 +2171,7 @@
     var sel = $('#perspective');
     if (!sel) return;
     sel.value = S.perspective;
+    faceList();
     // the select keeps its own title -- what declaring a type means at all;
     // what each type asks of the drawing hangs on the option
     [].forEach.call(sel.options, function (o) { o.title = PERSP_WHY[o.value] || ''; });
@@ -1868,7 +2179,7 @@
 
   function buildDoc() {
     var doc = { image: S.image, trim: S.trim, perspective: S.perspective,
-                scale: S.scale, vps: {}, vp_ranges: {}, surfaces: {},
+                scale: S.scale, vps: {}, own_vps: {}, vp_ranges: {}, surfaces: {},
                 square_of: {}, vp_names: {}, family_lines: {}, family_curves: {},
                 features: {} };
     families().forEach(function (L) {
@@ -1891,10 +2202,15 @@
     var horiz = horizonVps(null);
     if (horiz) doc.horizon_vps = [horiz[0].id, horiz[1].id];
     S.layers.forEach(function (L) {
-      if (L.kind === 'family') return;
+      if (L.kind === 'family' || L.kind === 'vault') return;
       if (L.kind === 'surface') {
         doc.surfaces[L.id] = { name: L.name, level: !!L.level,
                                vps: (L.refs.vps || []).filter(Boolean) };
+        if (L.ownVps) doc.surfaces[L.id].vps = L.ownVps.map(function (v, i) {
+          var k = L.id + '.' + i;
+          doc.own_vps[k] = v; doc.vp_names[k] = L.name;
+          return k;
+        });
         return;
       }
       var f = { kind: L.kind, name: L.name };
@@ -1917,6 +2233,7 @@
       else if (KINDS[L.kind].draw === 'pair' || KINDS[L.kind].draw === 'triple') f.pairs = L.pairs;
       Object.keys(L.refs).forEach(function (k) { if (L.refs[k]) f[k] = L.refs[k]; });
       if (L.kind === 'arc' || L.kind === 'ellipse') f.resolve = Number(L.resolve);
+      if (L.kind === 'pattern') { f.motif = L.motif; f.ratio = Number(L.ratio); }
       // the drag the circle was built from, so the server can rebuild it
       if (L.kind === 'ellipse' && L.lines.length) f.ring_from = L.lines.slice();
       if (L.kind === 'ellipse' && L.cells.length) f.cells = L.cells.slice();
@@ -1965,13 +2282,7 @@
     return families().filter(marked).length >= (S.ref ? 1 : 2);
   }
 
-  function runConsensus() {
-    var f = families().filter(marked);
-    if (!consensusReady()) {
-      toast(S.ref ? 'one line family at least, to put against the camera'
-                  : 'two line families at least', true);
-      return;
-    }
+  function familyBody(f) {
     var fam = {}, cur = {};
     f.forEach(function (L) { fam[L.id] = L.lines; cur[L.id] = L.curves; });
     // The family flagged as the vertical one names the upright axis, which is
@@ -1979,11 +2290,50 @@
     // is tried and the cheapest wins, which is slower and can pick wrong.
     var roles = {};
     f.forEach(function (L) { if (L.vertical) roles[L.id] = 'vertical'; });
-    post('/api/consensus', {
-      families: fam, curves: cur, image_size: [S.image.w, S.image.h],
-      mode: S.perspective, roles: roles, scale: S.scale,
-      reference: S.ref ? S.ref.camera : null
-    }).then(function (r) {
+    return { families: fam, curves: cur, roles: roles, mode: S.perspective,
+             image_size: [S.image.w, S.image.h] };
+  }
+
+  // Turning the camera about its own centre is a homography, so a picture
+  // stood up is one more trim: the marks go with it, and the file stays as it was.
+  function upright() {
+    var b = $('#uprightState');
+    if (!S.image) { toast('open a picture first', true); return; }
+    b.textContent = '';
+    var f = families().filter(function (L) { return marked(L) && !(L.refs || {}).square_of; });
+    if (f.length < 2) { toast('two line families at least: mark them, or take the guess under Detect edges', true); return; }
+    var body = familyBody(f), face = $('#uprightFace').value;
+    if (S.perspective === 'one' && face) body.roles[face] = 'depth';
+    body.image = S.image.path; body.trim = S.trim;
+    post('/api/upright', body).then(function (r) {
+      if (r.error) { toast(r.error, true); return; }
+      if (r.trim) { setTrim(r.trim); return; }
+      b.className = 'why' + (r.verdict === 'undetermined' ? ' warn' : '');
+      b.textContent = r.why || ('Already ' + r.verdict.replace('already ', '') + ' to within a mark.');
+    });
+  }
+
+  function faceList() {
+    var sel = $('#uprightFace'), was = sel.value, one = S.perspective === 'one';
+    var f = one ? families().filter(function (L) { return marked(L) && !L.vertical; }) : [];
+    sel.classList.toggle('hidden', f.length < 2);
+    sel.textContent = '';
+    sel.append(el('option', { value: '', textContent: 'depth: deepest' }));
+    f.forEach(function (L) { sel.append(el('option', { value: L.id, textContent: 'depth: ' + L.name })); });
+    sel.value = was;
+    if (sel.selectedIndex < 0) sel.value = '';
+  }
+
+  function runConsensus() {
+    var f = families().filter(marked);
+    if (!consensusReady()) {
+      toast(S.ref ? 'one line family at least, to put against the camera'
+                  : 'two line families at least', true);
+      return;
+    }
+    var b = familyBody(f);
+    b.scale = S.scale; b.reference = S.ref ? S.ref.camera : null;
+    post('/api/consensus', b).then(function (r) {
       if (r.error) { toast(r.error, true); return; }
       S.consensus = r.free && r.free.verdict ? r.free : (r.reference || r);
       S.consensusBoth = r;
@@ -2101,6 +2451,8 @@
   function refreshLayers() {
     var host = $('#layers');
     host.textContent = '';
+    faceList();
+    S.layers.forEach(fitPattern);
     S.layers.forEach(function (L) {
       var row = el('div', { className: 'layer' + (L.id === S.sel ? ' on' : '') +
                                        (L.hidden ? ' hid' : '') });
@@ -2121,8 +2473,6 @@
         ct.textContent = n + ' line' + (n === 1 ? '' : 's') + (L.vp || S.perspective === 'five' ? '' : n >= 2 ? ' · no VP' : '');
       } else if (L.kind === 'surface') {
         ct.textContent = surfaceQuad(L) ? 'drawn' : n ? 'no VPs yet' : 'not drawn';
-      } else if (KINDS[L.kind].draw === 'none') {
-        ct.textContent = 'refs';
       } else {
         ct.textContent = n;
       }
@@ -2191,6 +2541,7 @@
     $('#edName').value = L.name;
     $('#edColor').value = L.color;
     $('#drawHint').textContent = hintFor(L);
+    S.layers.forEach(fitPattern);
 
     var f = $('#edFields');
     f.textContent = '';
@@ -2274,37 +2625,59 @@
       // is parallel to the floor and its vanishing line IS the horizon. That
       // needs no lines marked on the table at all -- only that a horizon
       // exists, which two horizontal families already give.
-      var horiz = horizonVps(null) || [];
-      var lr = el('div', { className: 'row' });
-      var lb = el('input', { type: 'checkbox', checked: !!L.level,
-                             disabled: horiz.length < 2 && !L.level });
-      lb.onchange = function () { L.level = lb.checked; showEditor(); paint(); commit(); };
-      lr.append(lb);
-      lr.append(el('label', { textContent: 'level with the ground',
-        title: 'Its vanishing line is the horizon. Nothing here measures whether it really is level.' }));
-      f.append(lr);
-      if (horiz.length < 2) {
+      if (L.ownVps) {
         f.append(el('div', { className: 'hint',
-          textContent: 'Two horizontal families are what deduce a horizon; ' +
-            horiz.length + ' marked so far' + (L.level ? ', so a level surface ' +
-            'cannot be read yet.' : '.') }));
-      }
-      if (L.level) {
-        if (horiz.length >= 2) f.append(el('div', { className: 'hint',
-          textContent: 'The horizon through ' + horiz.slice(0, 2).map(function (F) {
-            return F.name; }).join(' and ') + '. Declared, not measured: the check ' +
-            'will say so.' }));
+          textContent: 'Spanned by the two directions read off its pattern. They are not counted as evidence for the camera.' }));
       } else {
-        f.append(refRow(L, '_a', 'spanned by', 'The two vanishing points of directions lying IN this plane'));
-        f.append(refRow(L, '_b', 'and'));
-        L.refs.vps = [L.refs._a, L.refs._b];
-        f.querySelectorAll('select').forEach(function (s) {
-          s.addEventListener('change', function () {
-            L.refs.vps = [L.refs._a, L.refs._b];
-            showEditor(); paint();     // the patch is drawn from these two points
+        var horiz = horizonVps(null) || [];
+        var lr = el('div', { className: 'row' });
+        var lb = el('input', { type: 'checkbox', checked: !!L.level,
+                               disabled: horiz.length < 2 && !L.level });
+        lb.onchange = function () { L.level = lb.checked; showEditor(); paint(); commit(); };
+        lr.append(lb);
+        lr.append(el('label', { textContent: 'level with the ground',
+          title: 'Its vanishing line is the horizon. Nothing here measures whether it really is level.' }));
+        f.append(lr);
+        if (horiz.length < 2) {
+          f.append(el('div', { className: 'hint',
+            textContent: 'Two horizontal families are what deduce a horizon; ' +
+              horiz.length + ' marked so far' + (L.level ? ', so a level surface ' +
+              'cannot be read yet.' : '.') }));
+        }
+        if (L.level) {
+          if (horiz.length >= 2) f.append(el('div', { className: 'hint',
+            textContent: 'The horizon through ' + horiz.slice(0, 2).map(function (F) {
+              return F.name; }).join(' and ') + '. Declared, not measured: the check ' +
+              'will say so.' }));
+        } else {
+          f.append(refRow(L, '_a', 'spanned by', 'The two vanishing points of directions lying IN this plane'));
+          f.append(refRow(L, '_b', 'and'));
+          L.refs.vps = [L.refs._a, L.refs._b];
+          f.querySelectorAll('select').forEach(function (s) {
+            s.addEventListener('change', function () {
+              L.refs.vps = [L.refs._a, L.refs._b];
+              showEditor(); paint();     // the patch is drawn from these two points
+            });
           });
-        });
+        }
       }
+    }
+    if (L.kind === 'vault') f.append(el('div', { className: 'why', textContent: L.says }));
+    if (L.kind === 'pattern') {
+      f.append(surfRow(L));
+      var mr = el('div', { className: 'row' }), ms = el('select', { className: 'grow' });
+      mr.append(el('label', { textContent: 'repeat', title: 'What is laid across the surface.' }));
+      Object.keys(MOTIFS).forEach(function (m) {
+        ms.append(el('option', { value: m, textContent: m, selected: L.motif === m }));
+      });
+      ms.onchange = function () { L.motif = ms.value; showEditor(); paint(); commit(); };
+      mr.append(ms);
+      f.append(mr);
+      if (/herringbone/.test(L.motif)) f.append(numRow(L, 'ratio', 'widths long', '0.5', 'How many of its own widths long a plank is.'));
+      var po = patOut[L.id] || {}, pw = L.pts.length >= 3 && (po.error || po.why);
+      f.append(el('div', { className: 'why' + (pw ? ' warn' : ''), textContent: L.pts.length < 3
+        ? (3 - L.pts.length) + ' more mark' + (L.pts.length === 2 ? '' : 's') + ': ' + MOTIFS[L.motif]
+        : pw || (po.polys ? po.polys.length + ' pieces drawn. Check says how far the corners marked past the third drift from it.' : '') }));
     }
     if (L.kind === 'arc') {
       f.append(surfRow(L));
@@ -2590,13 +2963,17 @@
     // Any outline declared to lie in a surface can be looked at square on.
     // Not a check: a drawing cannot be judged in perspective, and this hands
     // the eye the shape with the foreshortening taken out.
-    if (L.refs.surface && L.pts.length >= 3) {
+    if (L.kind === 'surface' ? surfaceQuad(L) : L.refs.surface && L.pts.length >= 3) {
       var sr2 = el('div', { className: 'row' });
-      var sb = el('button', { className: 'small', textContent: 'Straighten',
-        title: 'Show this shape as if its surface were facing us. Nothing is ' +
+      var sb = el('button', { className: 'small', textContent: 'Show flat',
+        title: 'Show this as if its surface were facing us. Nothing is ' +
                'graded \u2014 it is there to be looked at.' });
       sb.onclick = function () { straighten(L); };
       sr2.append(sb);
+      if (S.straight && S.straight.id === L.id) {
+        sr2.append(el('a', { className: 'btn small ghost', textContent: 'Save picture',
+                             href: S.straight.url, download: L.name + '-flat.png' }));
+      }
       f.append(sr2);
       var host = el('div', { id: 'straightHost' });
       if (S.straight && S.straight.id === L.id) {
@@ -2715,6 +3092,9 @@
       g.strokeStyle = f < 0 ? '#8a94a6' : COLORS[f % COLORS.length];
       strokeSeg(g, q);
     });
+    g.lineWidth = 2; g.strokeStyle = '#ffd400';
+    (S.cand.arches || []).forEach(function (a) { strokePath(g, a.pts); });
+    ((S.cand.ribs || {}).ribs || []).forEach(function (r) { g.strokeStyle = RIB[r.verdict]; strokePath(g, r.pts); });
     g.restore();
   }
 
@@ -2774,9 +3154,9 @@
     var r = el('div', { className: 'row' });
     // an ellipse falls back to the ground; everything else must say which
     // plane it lies in, because nothing shows the reader that it guessed
-    var ground = L.kind === 'ellipse';
+    var ground = L.kind === 'ellipse' || L.kind === 'pattern';
     r.append(el('label', { textContent: 'surface', title: ground
-      ? 'Optional. Empty means the circle lies flat on the ground, whose vanishing line is the horizon. Name a surface for one standing in a wall or on a slope.'
+      ? 'Optional. Empty means it lies flat on the ground, whose vanishing line is the horizon. Name a surface for one standing in a wall or on a slope.'
       : 'Required. An arc in a wall measured against the horizon looked plausible for a whole session and was wrong.' }));
     var sel = el('select', { className: 'grow' });
     sel.append(el('option', { value: '',
@@ -2895,10 +3275,11 @@
          : ' Drag out each line; drag a dot on its end to move that end, '
            + 'cmd-click it to delete the line.')
       : how === 'cell' ? ' Click inside a cell \u2014 between two lines of each family \u2014 and the circle inscribed in it is drawn.'
+      : L.kind === 'pattern' ? ' Click: ' + MOTIFS[L.motif] + '.'
       : how === 'poly' ? ' Drag to trace it, or click point by point; Enter or double-click ends a clicked run.'
       : how === 'triple' ? " Click three for each object: its base on the ground, its top, then its shadow's tip."
       : how === 'pair' ? ' Click the two points of each pair.'
-      : ' Nothing to draw -- choose the vanishing points below.';
+      : '';
     return KINDS[L.kind].blurb + tail;
   }
 
@@ -2906,7 +3287,7 @@
 
   function verdictChip(v) {
     var cls = (v === 'undetermined' || v === 'check these') ? 'v-undetermined'
-      : (v === 'ok' || v === 'already consistent') ? 'v-ok'
+      : (v === 'ok' || v === 'even' || v === 'already consistent') ? 'v-ok'
       : (v === 'rectifiable' || v === 'at_infinity') ? 'v-info' : 'v-off';
     return el('span', { className: 'verdict ' + cls, textContent: v });
   }
@@ -3159,12 +3540,19 @@
     $('#btnTrimCancel').classList.toggle('hidden', !S.trimEdit);
     $('#btnTrimEdit').textContent = on ? 'Move corners' : 'Place corners';
     $('#btnTrimClear').classList.toggle('hidden', !on);
+    var save = $('#btnPicSave');
+    save.classList.toggle('hidden', !on || S.trimEdit || !S.image);
+    if (on && !S.trimEdit && S.image) {
+      save.href = picURL('/api/image', S.image.path);
+      save.download = S.image.path.split('/').pop().replace(/\.[^.]*$/, '') +
+                      (S.trim.outline ? '-straight.png' : '-trimmed.png');
+    }
     if (S.trimEdit) {
       b.textContent = 'Drag the four corners onto the sheet, then Apply. ' +
                       'They may sit outside the picture if the sheet runs off it.';
     } else if (on) {
-      b.textContent = 'Trimmed to ' + S.trim.out[0] + ' \u00d7 ' + S.trim.out[1] +
-                      '. ' + (S.trim.note || '');
+      b.textContent = (S.trim.outline ? 'Straightened to ' : 'Trimmed to ') + S.trim.out[0] +
+                      ' \u00d7 ' + S.trim.out[1] + '. ' + (S.trim.note || '');
     } else {
       b.textContent = 'Untrimmed. A flat scan needs no trim; a photograph ' +
                       'usually does.';
@@ -3259,6 +3647,10 @@
       (L.curves || []).forEach(function (cv) {
         cv.forEach(function (q) { fn(q, 0, 1, L, 'curves', 0); });
       });
+      (L.ownVps || []).forEach(function (q) { fn(q, 0, 1, L, 'ownVps', 0); });
+      (L.ribs || []).forEach(function (r) {
+        r.pts.forEach(function (q) { fn(q, 0, 1, L, 'ribs', 0); });
+      });
     });
   }
 
@@ -3336,14 +3728,14 @@
             S.trim.note = info.trim.keystone;
           }
           $('#meta').textContent = path.split('/').pop() + '  ' + info.w + ' x ' + info.h +
-            (shownTrim() ? '  (trimmed)' : '');
+            (shownTrim() ? (shownTrim().outline ? '  (straightened)' : '  (trimmed)') : '');
           // The declared size describes the picture as it is NOW, so trimming
           // changes what a millimetre is worth. Resolving it against the live
           // width on every use means trimming to the sheet keeps the same
           // declaration meaning the same edge, and the panel shows it move.
           sizeState();
           $('#btnBeside').classList.toggle('hidden', !info.marks);
-          S.cand = null;        // detected in the old picture's pixels
+          S.cand = null; paintCand();        // detected in the old picture's pixels
           if (!had) {
             S.results = null; S.consensus = null;
             $('#results').textContent = '';
@@ -3424,6 +3816,10 @@
                   lines: L.lines, curves: L.curves, pts: L.pts, far: L.far, pairs: L.pairs,
                   vp: L.vp };
         if (L.kind === 'surface') o.quad = surfaceQuad(L);
+        if (L.kind === 'vault') o.ribs = L.ribs;
+        if (L.kind === 'pattern' && patOut[L.id]) {
+          o.polys = patOut[L.id].polys; o.shaded = patOut[L.id].shaded;
+        }
         // both rings, as on screen: the export gets annotated in
         // Illustrator, and the lean is the thing to look at
         if (L.kind === 'ellipse') {
@@ -3518,6 +3914,7 @@
     // -- the hand-written menu still offered "arch (near limb, optional far
     // limb)" after the arch started building itself.
     Object.keys(KINDS).forEach(function (k) {
+      if (KINDS[k].draw === 'none') return;
       $('#newKind').append(el('option', { value: k, textContent: KINDS[k].label,
                                           title: KINDS[k].blurb }));
     });
@@ -3632,6 +4029,7 @@
     $('#fileLoad').onchange = function (e) { if (e.target.files[0]) loadMarks(e.target.files[0]); };
     $('#btnFit').onclick = fitView;
     $('#btnDetect').onclick = runDetect;
+    $('#btnUpright').onclick = upright;
     // a preset fills the four fields; changing one by hand makes them the
     // user's own
     var DET = ['#detTol', '#detMerge', '#detFloor', '#detJoin'];
@@ -3641,6 +4039,7 @@
     };
     DET.forEach(function (q) { $(q).oninput = function () { $('#detPreset').value = ''; }; });
     $('#showCand').onchange = paint;
+    $('#showPicture').onchange = paint;
     $('#showFits').onchange = paint;
     $('#showMoves').onchange = paint;
     $('#showPlan').onchange = paint;
