@@ -35,6 +35,7 @@
     shadow:  { draw: 'triple', label: 'cast shadows', blurb: "Three clicks an object: where it meets the ground, its top, and the TIP of its cast shadow. Two objects are enough. The rays run to the light, the shadows run along the ground to the light's own foot, and a light stands over its foot \u2014 so the light, its foot and the vertical vanishing point are in one line, for a lamp in the room and for the sun alike. The sun is the case whose foot goes all the way to the horizon, and the check says which it was." },
     pairs:   { draw: 'pair', label: 'landmark pairs', blurb: 'Left then right, for each pair that should be symmetric.' },
     vault:   { draw: 'none', label: 'vault',        blurb: 'The regular vault the ribs found belong to, built by Detect edges from the rule it deduced. Solid where a rib was found, dashed where the rule adds one.' },
+    corner:  { draw: 'none', label: 'real corners', blurb: 'Where real surfaces meet, as at the corner of a box or a room. Double-click where lines of two families meet to make one: each line ending there is trimmed or extended to the point where they cross, and from then on they are joined, so dragging the corner, or a line end on it, moves every line there. Lines that only cross in the picture are left as they are. A line drawn or dragged to within a hand mark of a corner lands on it. Cmd-click a corner here to unjoin it; a square is hollow once no line ends on it. Double-click inside four lines of two families joined at four corners, as a box\u2019s face is, and it becomes a surface spanned by those two families.' },
     landmark:{ draw: 'pair', label: 'known size',   blurb: "Base then top, for each thing whose REAL size you know -- a 180 cm figure, a 2 m door. That size turns the camera into the distance from the viewer to it. Mark the base where the thing's own silhouette meets the ground, and mark it as tall on the page as you can: a figure 80 px tall is worth +-29 %, one 30 px tall is refused." }
   };
 
@@ -44,7 +45,9 @@
     checker: 'a corner of one tile, then the next corner along each side',
     brick: 'a corner of one brick, its far end along the course, then the corner two courses up',
     herringbone: 'a corner of one plank, its far end along the length, then the next corner across the width',
-    'mirrored herringbone': 'a corner of one plank, its far end along the length, then the next corner across the width'
+    'mirrored herringbone': 'a corner of one plank, its far end along the length, then the next corner across the width',
+    // a drawing of one repeat, from an SVG file: its viewBox is the repeat
+    'from a file': 'where the drawing\'s top left corner goes, then its top right, then its bottom left'
   };
 
   var COLORS = ['#2ca8ff', '#ffd400', '#ff6b35', '#00e676', '#c77dff',
@@ -344,7 +347,7 @@
     if (KINDS[L.kind].draw === 'pair' || KINDS[L.kind].draw === 'triple') return L.pairs.length;
     if (L.kind === 'arch') return L.pts.length + L.far.length;
     if (L.kind === 'surface') return L.lines.length;
-    if (KINDS[L.kind].draw === 'none') return L.ribs.length;
+    if (KINDS[L.kind].draw === 'none') return (L.ribs || L.pts).length;
     if (L.kind === 'ellipse') return L.pts.length + L.cells.length;
     return L.pts.length;
   }
@@ -412,6 +415,14 @@
         g.setLineDash([]);
         return;
       }
+      if (L.kind === 'corner') {
+        L.pts.forEach(function (p) {
+          var a = toScreen(p), r = on ? 5 : 4;
+          if (jointAt(p).length) g.fillRect(a[0] - r, a[1] - r, 2 * r, 2 * r);
+          else { g.lineWidth = 1.6; g.strokeRect(a[0] - r, a[1] - r, 2 * r, 2 * r); }
+        });
+        return;
+      }
       if (L.kind === 'surface') {
         var q = surfaceQuad(L);
         if (q) {
@@ -430,15 +441,14 @@
           strokeSeg(g, L.lines[0]); g.restore();
         }
       } else if (L.kind === 'pattern') {
-        var T = patOut[L.id] || {}, tile = function (q) {
+        var T = patOut[L.id] || {}, run = function (q) {
           q.forEach(function (c, i) {
             var t = toScreen(c);
             if (i) g.lineTo(t[0], t[1]); else g.moveTo(t[0], t[1]);
           });
-          g.closePath();
-        };
+        }, tile = function (q) { run(q); g.closePath(); };
         g.save(); g.lineWidth = 1; g.globalAlpha = on ? 0.8 : 0.5;
-        g.beginPath(); (T.polys || []).forEach(tile); g.stroke();
+        g.beginPath(); (T.polys || []).forEach(tile); (T.paths || []).forEach(run); g.stroke();
         g.beginPath();
         (T.polys || []).forEach(function (q, i) { if (T.shaded[i]) tile(q); });
         g.globalAlpha *= 0.4; g.fill();
@@ -1030,6 +1040,144 @@
     refreshLayers(); showEditor(); paint(); commit();
   }
 
+  // ------------------------------------------------------------ real corners
+  // Lines can cross on the page and mean nothing there; a corner says this
+  // meeting is real, where two surfaces meet. Joined means the line ends sit
+  // on the corner's very numbers, so equality is the join: nothing to keep in
+  // step through undo, save, load or a deleted line, and a line Tidy swings
+  // off it has simply left it.
+  function cornerLayer(make) {
+    var C = S.layers.filter(function (L) { return L.kind === 'corner'; })[0] || null;
+    if (!C && make) { C = newLayer('corner'); C.name = KINDS.corner.label; }
+    return C;
+  }
+
+  // every family line end sitting on p, as [family, line, 0 or 2]; with
+  // `all`, a face's surface too, whose diagonal ends on two corners
+  function jointAt(p, all) {
+    var out = [];
+    S.layers.forEach(function (F) {
+      if (F.kind !== 'family' && !(all && F.kind === 'surface')) return;
+      F.lines.forEach(function (s) {
+        [0, 2].forEach(function (j) { if (s[j] === p[0] && s[j + 1] === p[1]) out.push([F, s, j]); });
+      });
+    });
+    return out;
+  }
+
+  // a line end within a hand mark of a corner is put on it, unless the line's
+  // other end is already there
+  function toCorner(s, j) {
+    var C = cornerLayer(false), r = MARK_PX / S.view.k, best = null;
+    if (!C || C.hidden) return;
+    C.pts.forEach(function (p) {
+      var d = Math.hypot(p[0] - s[j], p[1] - s[j + 1]);
+      if (d < r && (!best || d < best.d) && !(s[2 - j] === p[0] && s[3 - j] === p[1])) best = { d: d, p: p };
+    });
+    if (best) { s[j] = best.p[0]; s[j + 1] = best.p[1]; }
+  }
+
+  // A double-click where lines meet. The nearest line of each family within
+  // two hand marks is taken; the corner is where they cross, least squares
+  // for three or more, or the corner already there. A line ending within two
+  // hand marks of it has that end put on it: trimmed or extended along
+  // itself, so with two lines nothing turns and no vanishing point moves. A
+  // line running on past it passes through, and is left as drawn. Says why
+  // when there is nothing to join, and leaves the toast to the caller.
+  function join(w) {
+    var r = 2 * MARK_PX / S.view.k, C = cornerLayer(false), p = null, ls = [];
+    (C && !C.hidden ? C.pts : []).forEach(function (q) {
+      if (Math.hypot(q[0] - w[0], q[1] - w[1]) < r && (!p || Math.hypot(q[0] - w[0], q[1] - w[1]) < Math.hypot(p[0] - w[0], p[1] - w[1]))) p = q;
+    });
+    families().forEach(function (F) {
+      if (F.hidden) return;
+      var best = null;
+      F.lines.forEach(function (s) { var d = segDist(w, s); if (d < r && (!best || d < best.d)) best = { d: d, s: s }; });
+      if (best) ls.push([F, best.s]);
+    });
+    if (!p) {
+      if (ls.length < 2) return 'no lines of two families meet here, and no four joined lines of two families close round it';
+      var A = 0, B = 0, D = 0, E = 0, G = 0;
+      ls.forEach(function (x) {
+        var s = x[1], a = s[1] - s[3], b = s[2] - s[0], n = Math.hypot(a, b), c;
+        a /= n; b /= n; c = -(a * s[0] + b * s[1]);
+        A += a * a; B += a * b; D += b * b; E += a * c; G += b * c;
+      });
+      var det = A * D - B * B;
+      p = det > 1e-6 ? [(B * G - D * E) / det, (B * E - A * G) / det] : null;
+      var off = p ? Math.hypot(p[0] - w[0], p[1] - w[1]) : Infinity;
+      if (off > r) return p ? 'those lines cross ' + num(off, 0) + ' px from where you double-clicked, not here'
+                            : 'those lines run parallel here, so they do not meet';
+    }
+    var moved = [];
+    ls.forEach(function (x) {
+      var s = x[1], d0 = Math.hypot(s[0] - p[0], s[1] - p[1]), d2 = Math.hypot(s[2] - p[0], s[3] - p[1]);
+      var j = Math.min(d0, d2) >= r ? -1 : d0 <= d2 ? 0 : 2;
+      if (j < 0 || (s[j] === p[0] && s[j + 1] === p[1])) return;
+      moved.push(Math.hypot(s[j] - p[0], s[j + 1] - p[1]));
+      s[j] = p[0]; s[j + 1] = p[1];
+      fitFamily(x[0]);
+    });
+    if (!moved.length) {
+      if (!C || C.pts.indexOf(p) < 0) return 'every line here runs on past this point, so there is no end to join';
+      toast('already joined here: ' + jointAt(p).length + ' line ends'); return;
+    }
+    C = cornerLayer(true); C.hidden = false;
+    if (C.pts.indexOf(p) < 0) C.pts.push(p);
+    refreshLayers(); showEditor(); paint(); commit();
+    toast('joined at a real corner: ' + jointAt(p).length + ' line ends, moved up to ' +
+          num(Math.max.apply(null, moved), 1) + ' px');
+  }
+
+  // Double-clicked inside four lines of two families joined at four corners,
+  // as a box's face is: a surface spanned by those two families. Its patch is
+  // drawn as every surface's is, from one diagonal and the two vanishing
+  // points, so where it misses the other two corners those points are not
+  // quite the face's. The diagonal's ends are on corners, so it moves with
+  // them. The innermost face round the click is taken. Asked only when there
+  // is nothing to join, so a corner inside a face can still be joined.
+  function face(w) {
+    var C = cornerLayer(false), E = [], best = null;
+    if (!C || C.hidden) return false;
+    var on = function (x, y) { return C.pts.filter(function (p) { return p[0] === x && p[1] === y; })[0]; };
+    families().forEach(function (F) {
+      if (!F.hidden) F.lines.forEach(function (s) {
+        var a = on(s[0], s[1]), b = on(s[2], s[3]);
+        if (a && b && a !== b) E.push([F, a, b], [F, b, a]);     // both ways round
+      });
+    });
+    // ponytail: four nested scans, fine for the few dozen joined lines of a picture
+    E.forEach(function (e1) { E.forEach(function (e2) {
+      if (e2[1] !== e1[2] || e2[0] === e1[0] || e2[2] === e1[1]) return;
+      E.forEach(function (e3) {
+        if (e3[1] !== e2[2] || e3[0] !== e1[0] || e3[2] === e1[1] || e3[2] === e1[2]) return;
+        E.forEach(function (e4) {
+          if (e4[1] !== e3[2] || e4[2] !== e1[1] || e4[0] !== e2[0]) return;
+          var q = [e1[1], e1[2], e2[2], e3[2]], a = Math.abs(q.reduce(function (t, p, i) {
+            var n = q[(i + 1) % 4]; return t + p[0] * n[1] - n[0] * p[1]; }, 0));
+          if (inPoly(w, q) && (!best || a < best.a)) best = { a: a, q: q, F: e1[0], G: e2[0] };
+        });
+      });
+    }); });
+    if (!best) return false;
+    var q = best.q, F = best.F, G = best.G, had = S.layers.filter(function (X) {
+      var s = X.kind === 'surface' && X.lines[0];
+      return s && q.filter(function (p) { return (p[0] === s[0] && p[1] === s[1]) || (p[0] === s[2] && p[1] === s[3]); }).length === 2;
+    })[0];
+    if (had) { toast('this face is already a surface: ' + had.name, true); return true; }
+    var L = newLayer('surface'), nm = F.name + ' and ' + G.name;
+    var k = S.layers.filter(function (X) { return X.kind === 'surface' && X.name.indexOf(nm) === 0; }).length;
+    L.name = nm + (k ? ' ' + (k + 1) : '');
+    L.refs = { _a: F.id, _b: G.id, vps: [F.id, G.id] };
+    L.lines = [[q[0][0], q[0][1], q[2][0], q[2][1]]];
+    var Q = surfaceQuad(L);
+    refreshLayers(); paint(); commit();
+    toast(Q ? 'made a surface of this face, spanned by ' + nm + '; drawn from their vanishing points it misses the other two corners by up to ' +
+              num(Math.max(Math.hypot(Q[1][0] - q[1][0], Q[1][1] - q[1][1]), Math.hypot(Q[3][0] - q[3][0], Q[3][1] - q[3][1])), 1) + ' px'
+            : 'made a surface of this face; it is drawn once ' + F.name + ' and ' + G.name + ' both have a vanishing point', !Q);
+    return true;
+  }
+
   function onDown(ev) {
     if (!S.image) return;
     var p = canvasXY(ev), w = toWorld(p[0], p[1]);
@@ -1069,7 +1217,15 @@
       if (hit.path === 'cells') hit.layer.cellOut.splice(hit.i, 1);
       refreshLayers(); showEditor(); paint(); commit(); return;
     }
-    if (hit) { S.dragPt = hit; return; }
+    if (hit) {
+      // a real corner moves as one, grabbed by itself or by any line end on it
+      var at = hit.layer.kind === 'corner' ? hit.layer.pts[hit.i]
+             : hit.path === 'lines' && L.kind === 'family' ? hit.layer.lines[hit.i].slice(2 * hit.j, 2 * hit.j + 2) : null;
+      var C = at && cornerLayer(false);
+      hit.corner = C ? C.pts.filter(function (q) { return q[0] === at[0] && q[1] === at[1]; })[0] : null;
+      if (hit.corner) hit.group = jointAt(hit.corner, true);
+      S.dragPt = hit; return;
+    }
 
     if (candTakers(L)) {                       // adopt a detected segment
       var ci = nearestCand(w, 6 / S.view.k);
@@ -1119,6 +1275,12 @@
     if (S.dragLine) { S.dragLine.x2 = w[0]; S.dragLine.y2 = w[1]; paint(); }
     else if (S.dragPt) {
       var d = S.dragPt;
+      d.moved = true;
+      if (d.corner) {
+        d.corner[0] = w[0]; d.corner[1] = w[1];
+        d.group.forEach(function (e) { e[1][e[2]] = w[0]; e[1][e[2] + 1] = w[1]; });
+        paint(); return;
+      }
       if (d.path === 'pairs' || d.path === 'curves') d.layer[d.path][d.i][d.j] = w;
       else if (d.path === 'lines') {
         d.layer.lines[d.i][2 * d.j] = w[0];
@@ -1174,7 +1336,17 @@
       }
       refreshLayers(); paint();
     }
+    // a mark pressed and let go without moving changed nothing: no refit, and
+    // no undo step, which a refit answering since the last one would make
+    if (S.dragPt && !S.dragPt.moved) { S.dragPt = null; return; }
     if (S.dragPt) {
+      if (S.dragPt.group) {
+        S.dragPt.group.forEach(function (e, i, a) {
+          if (e[0].kind === 'family' && e[0] !== S.dragPt.layer && a.findIndex(function (o) { return o[0] === e[0]; }) === i) fitFamily(e[0]);
+        });
+      } else if (S.dragPt.path === 'lines' && S.dragPt.layer.kind === 'family') {
+        toCorner(S.dragPt.layer.lines[S.dragPt.i], 2 * S.dragPt.j);    // dropped on a corner: joined
+      }
       if (S.dragPt.path === 'lines') {
         if (S.dragPt.layer.kind === 'family') fitFamily(S.dragPt.layer);
         if (S.dragPt.layer.kind === 'ellipse') fitRing(S.dragPt.layer);
@@ -1415,6 +1587,15 @@
   // a surface is drawn from the vanishing points, not from a detected edge
   function candTakers(L) { return !!L && drawMode(L) === 'line' && L.kind !== 'surface'; }
 
+  function inPoly(p, q) {
+    var on = false;
+    for (var i = 0, j = q.length - 1; i < q.length; j = i++) {
+      if ((q[i][1] > p[1]) !== (q[j][1] > p[1]) &&
+          p[0] < (q[j][0] - q[i][0]) * (p[1] - q[i][1]) / (q[j][1] - q[i][1]) + q[i][0]) on = !on;
+    }
+    return on;
+  }
+
   function segDist(p, q) {
     var dx = q[2] - q[0], dy = q[3] - q[1], n2 = dx * dx + dy * dy;
     var t = n2 < 1e-12 ? 0
@@ -1442,7 +1623,10 @@
     // because they were built that way.
     if (contactful(L) || ONE_LINE[L.kind]) L.lines = [q.slice()];
     else { L.lines.push(q.slice()); }
-    if (L.kind === 'family') fitFamily(L);
+    if (L.kind === 'family') {
+      toCorner(L.lines[L.lines.length - 1], 0); toCorner(L.lines[L.lines.length - 1], 2);
+      fitFamily(L);
+    }
     if (L.kind === 'ellipse') fitRing(L);
     if (L.kind === 'arch') fitArch(L);
   }
@@ -1652,11 +1836,25 @@
   // something under them has moved.
   var patOut = {}, patAsked = {};
 
+  // A drawing of one repeat. The server reads the file; the layer keeps its
+  // outlines and not the file, so the marks travel without it.
+  function openTile(L) {
+    if (!window.LK || !LK.browse) { toast('file browser unavailable', true); return; }
+    LK.browse({ mode: 'file', exts: ['.svg'], title: 'A drawing of one repeat' }).then(function (p) {
+      if (!p) return;
+      post('/api/tile', { path: Array.isArray(p) ? p[0] : p }).then(function (r) {
+        if (r.error) { toast(r.error, true); return; }
+        L.tile = r;
+        showEditor(); paint(); commit();
+      });
+    });
+  }
+
   function fitPattern(L) {
     if (L.kind !== 'pattern') return;
     var s = L.refs.surface && layer(L.refs.surface), region = s ? surfaceQuad(s) : null;
     var plane = s ? surfaceVps(s) : (horizonVps(null) || []).map(function (F) { return F.vp; });
-    var key = JSON.stringify([L.pts, L.motif, L.ratio, plane, region]);
+    var key = JSON.stringify([L.pts, L.motif, L.ratio, plane, region, L.motif === 'from a file' && L.tile]);
     if (patAsked[L.id] === key) return;
     patAsked[L.id] = key;
     if (L.pts.length < 3) { delete patOut[L.id]; return; }
@@ -1743,14 +1941,7 @@
       return q.reduce(function (t, p) { return t + p[k] / 4; }, 0);
     });
     // a circle already has an anchor in this square: a second would draw it twice
-    function inside(p) {
-      var on = false;
-      for (var i = 0, j = q.length - 1; i < q.length; j = i++) {
-        if ((q[i][1] > p[1]) !== (q[j][1] > p[1]) &&
-            p[0] < (q[j][0] - q[i][0]) * (p[1] - q[i][1]) / (q[j][1] - q[i][1]) + q[i][0]) on = !on;
-      }
-      return on;
-    }
+    function inside(p) { return inPoly(p, q); }
     S.layers.forEach(function (E) {
       var P = E.kind === 'ellipse' && E.autoCells && planeFamilies(E);
       if (P && P.indexOf(L) >= 0 && P.indexOf(B) >= 0 && !E.cells.some(inside)) {
@@ -2202,7 +2393,7 @@
     var horiz = horizonVps(null);
     if (horiz) doc.horizon_vps = [horiz[0].id, horiz[1].id];
     S.layers.forEach(function (L) {
-      if (L.kind === 'family' || L.kind === 'vault') return;
+      if (L.kind === 'family' || L.kind === 'vault' || L.kind === 'corner') return;
       if (L.kind === 'surface') {
         doc.surfaces[L.id] = { name: L.name, level: !!L.level,
                                vps: (L.refs.vps || []).filter(Boolean) };
@@ -2233,7 +2424,10 @@
       else if (KINDS[L.kind].draw === 'pair' || KINDS[L.kind].draw === 'triple') f.pairs = L.pairs;
       Object.keys(L.refs).forEach(function (k) { if (L.refs[k]) f[k] = L.refs[k]; });
       if (L.kind === 'arc' || L.kind === 'ellipse') f.resolve = Number(L.resolve);
-      if (L.kind === 'pattern') { f.motif = L.motif; f.ratio = Number(L.ratio); }
+      if (L.kind === 'pattern') {
+        f.motif = L.motif; f.ratio = Number(L.ratio);
+        if (L.motif === 'from a file' && L.tile) f.tile = L.tile.paths;
+      }
       // the drag the circle was built from, so the server can rebuild it
       if (L.kind === 'ellipse' && L.lines.length) f.ring_from = L.lines.slice();
       if (L.kind === 'ellipse' && L.cells.length) f.cells = L.cells.slice();
@@ -2663,6 +2857,12 @@
       }
     }
     if (L.kind === 'vault') f.append(el('div', { className: 'why', textContent: L.says }));
+    if (L.kind === 'corner') {
+      var nj = L.pts.map(function (p) { return jointAt(p).length; });
+      f.append(el('div', { className: 'why', textContent: L.pts.length + ' corner' + (L.pts.length === 1 ? '' : 's') + ', ' +
+        nj.reduce(function (a, b) { return a + b; }, 0) + ' line ends joined' +
+        (nj.indexOf(0) >= 0 ? '; the hollow ones have no line ending on them any more' : '') }));
+    }
     if (L.kind === 'pattern') {
       f.append(surfRow(L));
       var mr = el('div', { className: 'row' }), ms = el('select', { className: 'grow' });
@@ -2674,10 +2874,21 @@
       mr.append(ms);
       f.append(mr);
       if (/herringbone/.test(L.motif)) f.append(numRow(L, 'ratio', 'widths long', '0.5', 'How many of its own widths long a plank is.'));
+      if (L.motif === 'from a file') {
+        var tr = el('div', { className: 'row' }), tb = el('button', { className: 'small', textContent: 'Open SVG',
+          title: 'A drawing of one repeat. Its viewBox is the repeat. Fill and colour are not read: every outline is drawn as a line.' });
+        tb.onclick = function () { openTile(L); };
+        tr.append(tb, el('span', { className: 'dim', textContent: L.tile
+          ? ' ' + L.tile.name + ': ' + L.tile.shapes + ' shapes, the repeat ' + L.tile.repeat +
+            (L.tile.skipped.length ? '; ' + L.tile.skipped.join(' and ') + ' not read' : '')
+          : ' no drawing yet, so the repeat is drawn as a grid' }));
+        f.append(tr);
+      }
       var po = patOut[L.id] || {}, pw = L.pts.length >= 3 && (po.error || po.why);
       f.append(el('div', { className: 'why' + (pw ? ' warn' : ''), textContent: L.pts.length < 3
         ? (3 - L.pts.length) + ' more mark' + (L.pts.length === 2 ? '' : 's') + ': ' + MOTIFS[L.motif]
-        : pw || (po.polys ? po.polys.length + ' pieces drawn. Check says how far the corners marked past the third drift from it.' : '') }));
+        : pw || (po.polys ? po.polys.length + (po.paths || []).length + ' pieces drawn' + (po.note ? '; ' + po.note : '') +
+                 '. Check says how far the corners marked past the third drift from it.' : '') }));
     }
     if (L.kind === 'arc') {
       f.append(surfRow(L));
@@ -3273,7 +3484,8 @@
       : how === 'line'
         ? (contactful(L) ? ' Drag out the edge they rest on.'
          : ' Drag out each line; drag a dot on its end to move that end, '
-           + 'cmd-click it to delete the line.')
+           + 'cmd-click it to delete the line.'
+           + (L.kind === 'family' ? ' Double-click where lines of two families really meet to join them there, and inside four joined lines to make them a surface.' : ''))
       : how === 'cell' ? ' Click inside a cell \u2014 between two lines of each family \u2014 and the circle inscribed in it is drawn.'
       : L.kind === 'pattern' ? ' Click: ' + MOTIFS[L.motif] + '.'
       : how === 'poly' ? ' Drag to trace it, or click point by point; Enter or double-click ends a clicked run.'
@@ -3818,7 +4030,7 @@
         if (L.kind === 'surface') o.quad = surfaceQuad(L);
         if (L.kind === 'vault') o.ribs = L.ribs;
         if (L.kind === 'pattern' && patOut[L.id]) {
-          o.polys = patOut[L.id].polys; o.shaded = patOut[L.id].shaded;
+          o.polys = patOut[L.id].polys; o.shaded = patOut[L.id].shaded; o.paths = patOut[L.id].paths;
         }
         // both rings, as on screen: the export gets annotated in
         // Illustrator, and the lean is the thing to look at
@@ -4047,7 +4259,30 @@
 
     var c = $('#view');
     c.addEventListener('mousedown', onDown);
-    c.addEventListener('dblclick', function (e) { e.preventDefault(); finishRun(); });
+    c.addEventListener('dblclick', function (e) {
+      e.preventDefault();
+      if (!S.image) return;
+      var L = selected(), p = canvasXY(e), w = toWorld(p[0], p[1]), own = 0;
+      // the double-click's own clicks, which a family takes as a run's points
+      while (own < 2 && own < S.pending.length) {
+        var q = S.pending[S.pending.length - 1 - own];
+        if (Math.hypot(q[0] - w[0], q[1] - w[1]) * S.view.k > 4) break;
+        own++;
+      }
+      // a run in progress ends on a double-click, as it always has, and so
+      // does a layer whose clicks are its marks
+      if (S.pending.length > own || (L && L.kind !== 'family' && L.kind !== 'corner')) { finishRun(); return; }
+      if (own) {
+        // and the undo step each made: a click that adds a point always
+        // commits one. Not compared by snapshot, which a vanishing point
+        // answering late has changed since.
+        S.pending = S.pending.slice(0, S.pending.length - own);
+        S.undo.length = Math.max(1, S.undo.length - own);
+      }
+      var why = join(w);
+      if (why && !face(w)) toast(why, true);
+      paint();
+    });
     c.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);

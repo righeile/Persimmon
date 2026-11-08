@@ -4973,6 +4973,81 @@ def patterns():
     tile = [[[10, 10], [200, 10], [200, 200]], [[300, 300], [500, 300], [500, 500]]]
     check("the tiles go out in the PDF", (pdf({**layer, "polys": tile}), pdf(layer)), pred=lambda v: v[0] > v[1])
 
+    # a drawn repeat, from an SVG file
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="10 20 100 50">'
+           '<defs><path id="d" d="M0,0 l5,0"/><symbol id="s"><rect width="2" height="2"/></symbol></defs>'
+           '<rect x="10" y="20" width="100" height="50"/><circle cx="60" cy="45" r="10"/>'
+           '<path d="M20,30 h10 v10 H20 z m5,5 l1,1"/><path d="M20,60 a10,10 0 0110,0"/>'
+           '<g transform="translate(50,30) scale(2)"><line x2="5"/></g>'
+           '<use xlink:href="#d" x="80" y="30"/><use href="#s" x="90" y="60"/>'
+           '<g style="display: none"><rect width="5" height="5"/></g><text>a</text></svg>')
+    got = PT.svg_tile(svg)
+    px = [np.array(q) * (100, 50) + (10, 20) for q in got["paths"]]
+    check("an SVG's viewBox is the repeat", got["paths"][0], [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]], 0)
+    check("  a circle in it comes back round, px", float(np.abs(np.hypot(*(px[1] - (60, 45)).T) - 10).max()), 0.0, 0.01)
+    check("  a move after a close starts where it closed", px[3], [[25, 35], [26, 36]], 1e-6)
+    check("  an arc's flags may run together, and it bows the way it sweeps",
+          px[4][len(px[4]) // 2], [25, 60 - (10 - np.sqrt(75))], 1e-3)
+    check("  a group's transform, and a use of a path and of a symbol",
+          [px[5][1].tolist(), px[6][1].tolist(), px[7][2].tolist()], [[60, 30], [85, 30], [92, 62]], 1e-6)
+    check("  what is hidden is left out, and text is named", (len(px), got["skipped"]), pred=lambda v: v == (8, ["text"]))
+    mm = PT.svg_tile('<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="5mm">'
+                     '<rect width="37.7953" height="18.8976"/></svg>')
+    check("no viewBox: its width and height, in mm, are the repeat",
+          (mm["repeat"], np.abs(np.array(mm["paths"][0]) - got["paths"][0]).max() < 1e-4), pred=lambda v: v == ("its width and height", True))
+    ext = PT.svg_tile('<svg xmlns="http://www.w3.org/2000/svg"><path d="M5,5 L25,5 L25,15"/></svg>')
+    check("  and with neither, the drawing's own extent", ext["paths"][0], [[0, 0], [1, 0], [1, 1]], 0)
+
+    def why(text):
+        try:
+            PT.svg_tile(text)
+        except ValueError as exc:
+            return str(exc)
+        return ""
+    check("a drawing of only text is refused, and says why",
+          why('<svg xmlns="http://www.w3.org/2000/svg"><text>a</text></svg>'), pred=lambda w: "text is not read" in w)
+    check("  and a file that is no SVG", why("a tile"), pred=lambda w: "not an SVG" in w)
+
+    art = [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]], [[0.5, -0.8], [0.5, 1.8]]]     # one stroke past its repeat
+    lines = [np.array(q) for q in PT.tiles(Hflat, region=box, art=art)["paths"]]
+    allp = np.vstack(lines)
+    check("a drawn repeat stays in its box", bool((allp >= box[0] - 0.01).all() and (allp <= box[2] + 0.01).all()),
+          pred=lambda v: v)
+    # the grid's lines inside it twice, each an edge of two tiles, and 8 columns of strokes, the
+    # copies above and below the box reaching into it
+    check("  and draws all of its lines there, px", sum(np.hypot(*np.diff(q, axis=0).T).sum() for q in lines),
+          2 * (8 * 360 + 6 * 480) + 8 * sum(max(0, min(383, 60 * j + 108) - max(23, 60 * j - 48)) for j in range(-5, 12)),
+          0.5)
+    frame = np.array([[0, 0], [W, 0], [W, H], [0, H]])
+    got = PT.tiles(Hm, region=frame, art=art)
+    w = np.vstack([np.array(q) for q in got["paths"]])
+    check("  never reaches the vanishing line, px", float((np.sign(l @ [o[0], o[1], 1.0]) * (w @ l[:2] + l[2])).min()),
+          pred=lambda d: d > 0)
+    c = np.array([q[0] for q in got["paths"] if len(q) == 5])
+    check("  and each whole copy starts on a corner of the lattice, px",
+          float(np.abs(RC._apply(Hm, np.round(RC._apply(np.linalg.inv(Hm), c))) - c).max()), 0.0, 0.01)
+    th = np.linspace(0, 2 * np.pi, 41)
+    heavy = [np.c_[0.15 + 0.04 * np.cos(th) + i % 8 / 10, 0.3 + 0.04 * np.sin(th) + i // 8 / 10].tolist() for i in range(40)]
+    hv = PT.tiles(Hm, region=frame, art=heavy)
+    depth = lambda g: RC._apply(np.linalg.inv(Hm), np.vstack(g["paths"])) @ Hm[2, :2] + Hm[2, 2]
+    check("a heavy drawing is laid on the nearest repeats, and says so",
+          (bool(hv.get("note")), float(depth(hv).max()) < 0.8 * float(depth(got).max())), pred=lambda v: v == (True, True))
+
+    with tempfile.TemporaryDirectory() as td:
+        for f in ("t.svg", "t.txt"):
+            with open(f"{td}/{f}", "w") as fh:
+                fh.write(svg)
+        r = cl.post("/api/tile", json={"path": td + "/t.svg"})
+        check("the page gets a drawing's outlines from its file",
+              (r.status_code, r.get_json().get("name"), len(r.get_json().get("paths", []))), pred=lambda v: v == (200, "t.svg", 8))
+        check("  and from nothing but an SVG", [cl.post("/api/tile", json={"path": f"{td}/{f}"}).status_code
+                                               for f in ("t.txt", "none.svg")], pred=lambda v: v == [400, 400])
+    drawn = {**doc, "features": {"T": {**doc["features"]["P"], "motif": "from a file", "tile": art}}}
+    r = cl.post("/api/pattern", json={"doc": drawn, "feature": "T", "region": [[0, 500], [W, 500], [W, H], [0, H]]}).get_json()
+    check("the page gets a drawn repeat laid on its surface", (len(r["polys"]), len(r["paths"]) > 20, len(r["moves"])),
+          pred=lambda v: v == (0, True, 6))
+    check("  and it goes out in the PDF", (pdf({**layer, "paths": tile}), pdf(layer)), pred=lambda v: v[0] > v[1])
+
 
 def arches_found():
     """Arches among the edges, found by turning, not by being told where."""

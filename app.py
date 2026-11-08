@@ -166,15 +166,15 @@ def _resolve(path):
 CAMERA_EXTS = (".blend", ".fspy", ".json")
 
 
-def _camera_file(path):
-    """A camera file the user chose: .blend, .fspy or .json and nothing else."""
+def _chosen(path, exts=CAMERA_EXTS, what="camera file"):
+    """A file the user chose, with one of `exts` and nothing else."""
     p = Path(path).expanduser()
     if not p.is_absolute():
         p = HERE / p
     p = p.resolve()
-    if p.suffix.lower() not in CAMERA_EXTS:
-        raise ValueError(f"{p.suffix or 'that'} is not a camera file this reads: "
-                         + ", ".join(CAMERA_EXTS))
+    if p.suffix.lower() not in exts:
+        raise ValueError(f"{p.suffix or 'that'} is not a {what} this reads: "
+                         + ", ".join(exts))
     if not p.is_file():
         raise ValueError(f"no such file: {p}")
     return p
@@ -1860,9 +1860,20 @@ def pattern():
         H = PT.lattice(l, *pts[:3])
     if H is None:
         return _err("the repeat lies along the plane's vanishing line")
+    art = feat.get("tile")
     return jsonify({**PT.tiles(H, feat.get("motif") or "grid", float(feat.get("ratio") or 4.0),
-                               region=b.get("region")),
+                               region=b.get("region"), art=[_pts(p) for p in art] if art else None),
                     "moves": c.get("moves") or []})
+
+
+@app.post("/api/tile")
+def tile():
+    """A drawn repeat for a pattern layer: the outlines of an SVG file, its viewBox the repeat."""
+    try:
+        p = _chosen(_body().get("path", ""), (".svg",), "drawing")
+        return jsonify({**PT.svg_tile(p.read_text(errors="replace")), "name": p.name})
+    except (ValueError, OSError) as exc:
+        return _err(str(exc))
 
 
 @app.post("/api/ellipse")
@@ -2547,7 +2558,7 @@ def camera_in():
     """
     b = _body()
     try:
-        got = CIO.read(_camera_file(b.get("path", "")), b.get("camera") or None)
+        got = CIO.read(_chosen(b.get("path", "")), b.get("camera") or None)
         cam = got["camera"]
         size = b.get("image_size")
         if size:

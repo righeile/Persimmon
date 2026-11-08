@@ -582,9 +582,16 @@ canvas { display: block; }
   flex: 1 1 122px; width: auto; min-width: 122px; max-width: 210px;
 }
 .plotctl input[type=number] { text-align: right; }
-.plotctl .pair { display: flex; gap: 6px; }
-.plotctl .pair > label { flex: 1 1 0; display: flex; align-items: center; gap: 5px; }
-.plotctl .pair input[type=number] { flex: 1 1 auto; width: auto; }
+/* A pair row puts up to four boxes side by side, and with that floor under
+   each a size row measured 600 px in a 290 px panel. The box, its label and
+   the pair all give up their minimum: any one left at auto holds the box at
+   its natural 151 px. */
+.plotctl .pair { display: flex; gap: 6px; min-width: 0; }
+.plotctl .pair > label { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 5px; }
+/* No spin buttons in a box this small: hidden, they still keep their room,
+   and a 45 px box then cut a width of 183 or 3.35. The arrow keys still step. */
+.plotctl .pair input[type=number] { flex: 1 1 auto; width: auto; min-width: 0; appearance: textfield; }
+.plotctl .pair input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 /* Axes and curves: folded away, because the defaults are already
    publication-ready and these exist for matching a figure already drawn. */
@@ -596,7 +603,8 @@ canvas { display: block; }
 .plotctl .more[open] > summary { color: var(--ink); margin-bottom: 5px; }
 .plotctl .more .row { margin-bottom: 4px; }
 .plotctl .more input[type=text] { flex: 0 0 122px; width: 122px; font-size: 11px; }
-.plotctl .pair select { flex: 0 0 46px; width: 46px; }
+/* The unit menu, as wide as "mm" needs -- a fixed 46 px showed "m". */
+.plotctl .pair select { flex: 0 0 auto; width: auto; min-width: 0; }
 
 /* The p-value block gets a red rule down its left edge: it is the part of the
    panel that changes what the figure asserts, not just how it looks. */

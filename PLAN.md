@@ -4843,3 +4843,265 @@ ridge, and a plan. The user's marks, when they
 come, would score everything here that says "by eye".
 
 **939 passed, 0 failed.**
+
+## 55. "we should be able to supply a pattern as a simple vector file" — a drawing of one repeat, laid across a surface — 2026-11-07
+
+*The request:*
+
+> for floors and other things: we should be able to supply a pattern as a simple vector file to use as a tile in a pattern
+
+### 55.1 What it is
+
+A motif, "from a file". The drawing's viewBox is one repeat, put on §51.4's lattice as
+the other motifs are: its top left corner on the first mark, its top right on the second,
+its bottom left on the third. An SVG's y runs down, so it runs toward the third mark.
+Copies go on every corner of the lattice that can reach the region, in the same band short
+of the vanishing line, and stop where a repeat falls under 2 px.
+
+It is a guide, drawn and not measured. Marks from the fourth on are checked against the
+lattice as before, and the drawing does not enter that, so a layer checks the same with a
+drawing as with the grid. Until a drawing is opened the grid stands in, and the card says so.
+
+### 55.2 Reading the file
+
+`svg_tile` in `core/pattern.py`, on the standard library's XML reader.
+
+Read: paths with every command, arcs by SVG 1.1 F.6.5, their flags run together as in
+"0110"; lines, polylines, polygons, rectangles with rounded corners, circles and ellipses;
+matrix, translate, scale, rotate about a point, skewX and skewY, down the tree; `use` of an
+element or a symbol at its x and y; units px, pt, pc, mm, cm and in. Curves are cut into
+pieces about a 32nd of the repeat, 2 to 64 to a curve, in the drawing's own scale under its
+transform.
+
+Left out: what is set `display: none` or `visibility: hidden` on the element or its style,
+and what is only defined (defs, symbols, clip paths, masks, markers, gradients, filters,
+style, script). Text, images and foreignObject are named on the card as not read. Fill,
+colour and stroke width are not read: every outline is a line.
+
+The repeat is the viewBox, else the width and height, else the drawing's own extent, and
+the card says which. Refused with why: a file that is no SVG, a drawing with nothing to
+repeat, naming what was there and not read ("text is not read"), and over 20 000 points
+in one repeat, which is grey on the page.
+
+Not read: a nested svg's own viewBox and a symbol's, whose contents are taken in the outer
+units; display set from a CSS class; a clip path on a shape, which is drawn whole.
+
+### 55.3 Laying it on
+
+`_lay`. A drawing may overhang its repeat, as a grout line drawn on one side does, so the
+copies tried reach as far as its extent. A copy wholly beyond any one edge of the band or
+region is dropped, whole copies are mapped at once, and a copy across an edge is cut segment
+by segment, so nothing drawn crosses the vanishing line. Over 6000 copies is refused with
+the number, as for the motifs. Past 100 000 points only the nearest copies are drawn, and
+the card says how many of how many.
+
+### 55.4 The page
+
+The repeat select has "from a file" and **Open SVG**, which opens the file browser Camera in
+uses; the server reads the path. The layer keeps the outlines and not the file, so the marks
+travel without it, undo carries it, and the PDF draws it. The card gives the file's name,
+its shapes, where the repeat came from and what was not read.
+
+### 55.5 Rows and breaks
+
+19 rows. The reader: the viewBox as the repeat, a circle round, a move after a close, arc
+flags run together and the side an arc bows, a group's transform, a use of a path and of a
+symbol, hidden left out and text named, width and height in mm, the drawing's own extent, a
+drawing of only text refused, a file that is no SVG. The laying: in its box, all its lines
+there by a length worked out by hand, never at the vanishing line, each whole copy on a
+corner of the lattice, a heavy drawing nearest first with a note. The server: outlines from
+a file, from nothing but an SVG, the repeat laid on its surface, and in the PDF.
+
+Six breaks, each on a copy, each failed a row: the arc's sweep reversed, a move after a
+close from the wrong point, the cut at an edge dropped, the farthest copies kept, a use's x
+and y ignored, and the copies tried cut to the repeat's own box. The last passed at first,
+since a stroke overhanging by a little left nothing outside the box to miss. The stroke now
+overhangs by most of a repeat each way.
+
+### 55.6 The page run
+
+Launched by `run_mac.command` on a spare port, on the final code: the shadow test picture,
+nine floor corners, and a square drawn with a diamond, a circle, quarter circles at its
+corners, an L at its top left and a line of text.
+
+- The grid stands in, 289 pieces. Open SVG: "floor-tile.svg: 8 shapes, the repeat its
+  viewBox; text not read", 3927 pieces. The squares lie on the floor's joints, the circles
+  are ellipses in their middles, and the L sits by the first mark, its long arm toward the
+  second.
+- Check: with no surface named, undetermined, as for every pattern; with a surface named
+  level with the ground, even, 0.78 px.
+- Undo, four steps: the drawing goes and the grid is back, 289. Redo: 3927.
+- Save marks carries the outlines, and Load marks on a fresh page draws 3927 again.
+- Save PDF has the drawing in it.
+- Console: two 400s, refusals while the test marks were set up, and nothing else.
+
+Not built: fills, colour, a drawing's own stroke widths, and a drawing as a check. The
+drawing is a guide, and only the lattice is measured.
+
+**977 passed, 0 failed.**
+
+## 56. "I would take these real intersection corners as joined" — real corners, made with a double-click — 2026-11-07
+
+*The request:*
+
+> our lines should snap to corners and form surfaces. are they?
+
+They did not: every line was free, and two lines meeting at a box's corner were two loose
+ends a pixel or three apart. Then:
+
+> maybe we should have some sort of points that define real intersections of two real world surfaces and imaginary lines that may intersect but actually mean nothing in the real world. I would take these 'real intersection corners as joined
+
+> maybe a double click on an intersection makes it joined
+
+### 56.1 What it is
+
+A layer of kind `corner`, "real corners", made the first time something is joined. Its
+points are the corners. A line end is joined to a corner when its numbers are the corner's
+own, exactly. Nothing else records the join, so there is nothing to keep in step: undo,
+save, load and a deleted line are right by construction, and a line Tidy swings off its
+corner has simply left it. A corner is a filled square while a line ends on it and hollow
+when none does; the card counts corners and joined ends.
+
+Lines that only cross in the picture are the imaginary intersections, and are never joined.
+
+### 56.2 Joining
+
+Double-click where lines meet, with no run of points begun. Within two hand marks of the
+click, the nearest line of each visible family is taken. The corner is where they cross:
+least squares over the lines' unit normals, exact for two; or the corner already there, if
+one is within two hand marks. A line with an end within two hand marks of the corner has
+that end put on it, trimmed or extended along its own line, so with two lines nothing turns
+and no vanishing point moves. A line running on past the corner passes through and is not
+moved. The families moved are refitted.
+
+Refused, with why: fewer than two families there; lines parallel there; a crossing more than
+two hand marks from the click ("those lines cross 40 px from where you double-clicked, not
+here"); and no end to join, when every line runs on past ("every line here runs on past this
+point, so there is no end to join"). At a corner already joined: "already joined here: 3
+line ends".
+
+### 56.3 Snapping and dragging
+
+A family line drawn, or one end dragged, to within a hand mark of a visible corner lands on
+it, unless the line's other end is already there. Pressing on a corner, with the corner layer
+selected, or on a family line end that sits on one, moves the corner and every end on it
+together, and refits each family touched. Cmd-click on a corner removes it and leaves the
+lines where they are.
+
+### 56.4 The double-click and undo
+
+A family takes a click as a point of a run, so the double-click's own two clicks have each
+added a point and an undo step. Those points are taken back, and exactly that many undo
+steps with them. They are counted, not found by comparing snapshots: a vanishing point
+answering after its commit has changed the state since, so no snapshot matches. A run begun
+before the double-click still ends on it, as before.
+
+The page run found one more stray step: a double-click on a line end presses that end, and
+letting go committed, which leaves a step whenever a refit has answered since the last one.
+A mark pressed and let go without moving now changes nothing and commits nothing.
+
+### 56.5 The page run
+
+Launched by `run_mac.command` on a spare port, on the final code: the shadow test picture,
+its three families, a new upright and a new line across drawn to meet near the box's corner.
+
+- Join: the corner is the lines' crossing to 1e-13 px, both ends on it exactly, the lines
+  turned 1e-15 rad, their far ends untouched, no run of points added. "joined at a real
+  corner: 2 line ends, moved up to 3.0 px".
+- Dragging the across line's joined end moves the corner and the upright's end with it;
+  two refits.
+- Undo twice: no corner layer, the lines as drawn. Redo twice: back.
+- A line into the picture drawn to 3.6 px off the corner lands on it: 3 ends.
+- Refused, and nothing changed: a double-click where an across line and a line into the
+  picture only cross, and one on an upright alone.
+- Three clicks and a double-click on a family still make a run of 4 points.
+- Undo all the way: each step is one of the steps made, the run's five clicks and the run,
+  then the line into the picture, the drag, the join and the two lines. The refused
+  double-clicks and the join's own clicks left none.
+- Save marks, then Load marks on a fresh page: the same, the card "1 corner, 3 line ends
+  joined", and dragging the corner moves all three ends.
+- A corner with no line on it is hollow beside the filled one; the card adds "the hollow
+  ones have no line ending on them any more".
+- Check and Save PDF with a corner layer: both answer, nothing in the console.
+
+One break, on a copy: the drag moving only the corner. The page run failed it, 0 ends on
+the moved corner.
+
+No rows: it is all in the page, and the page run is its test.
+
+Not built: surfaces formed from joined lines, which the first request asked for; corners in
+the PDF; joining curves or a surface's lines; and unjoining one line at a corner but not the
+rest, short of removing the corner.
+
+**977 passed, 0 failed.**
+
+## 57. "upon double click" — four joined lines make a surface — 2026-11-07
+
+*The request:* the rest of §56's first question, "our lines should snap to corners and form
+surfaces". Asked whether four joined lines should become a surface by themselves or on a
+double-click inside them:
+
+> upon double click
+
+### 57.1 What it is
+
+A face is four lines of two families joined at four corners, alternating, as a box's face
+is. A double-click inside one makes a surface layer spanned by those two families, named
+for them ("uprights and across", then "uprights and across 2" for another face of the
+same two). Its patch is one diagonal of the face, corner to corner, and is drawn as every
+surface's is, from that diagonal and the two vanishing points. Where it misses the other two
+corners, the vanishing points are not quite the face's, and the message says by how much:
+"made a surface of this face, spanned by uprights and across; drawn from their vanishing
+points it misses the other two corners by up to 1.6 px". With no vanishing point yet, it
+says the surface is drawn once both families have one.
+
+The diagonal's ends are the corners' own numbers, so they are joined as line ends are:
+dragging a corner moves the surface with it, and undo, save and load keep it. Only the
+families are refitted after such a drag. The selected layer stays selected, so the next
+double-click can join or make a face again.
+
+### 57.2 Which double-click does what
+
+A double-click joins first: an existing corner near it, or a crossing with an end to put
+on it. Only when there is nothing to join is it asked whether the click is inside a face,
+and only when it is not either is the refusal shown. The first build asked about the face
+first, and a corner inside a face could not be joined: the page run found that, every
+double-click on the inner face's corners answering "this face is already a surface".
+
+Inside faces within faces, the innermost round the click is taken. A face already a surface
+is refused with the surface's name. A double-click in no face, at no crossing, says both:
+"no lines of two families meet here, and no four joined lines of two families close round
+it".
+
+### 57.3 The page run
+
+Launched by `run_mac.command` on a spare port, on the final code: the shadow test picture,
+its three families, and a face of new lines drawn on the vanishing points' lines, one side
+turned by 1.2°, joined at its four corners by four double-clicks.
+
+- A double-click inside: one surface, "uprights and across", spanned by the uprights and
+  across, its diagonal on two opposite corners, the families still selected. The message's
+  1.6 px is 1.557 px worked out again from the latest fits for these lines.
+- Undo: no surface. Redo: back.
+- A double-click by one corner: "already joined here: 2 line ends". Inside the face again:
+  refused with its name. In no face, at no crossing: the refusal above. None changed
+  anything.
+- Dragging a corner on the diagonal moves the diagonal's end with it and leaves the other;
+  two refits, no errors. Undo and redo.
+- A smaller face drawn inside, joined at its four corners, then a double-click inside it:
+  "uprights and across 2", its diagonal on the inner corners, missing by 0.7 px. Inside the
+  big face but not the small one: the big face, refused with its name.
+- Save marks, then Load marks on a fresh page: both surfaces, and dragging a corner still
+  moves the diagonal. Check and Save PDF both answer.
+- §56's run again on this code: the same, and the same clean undo trail.
+- Console: nothing new.
+
+One break, on a copy: the largest face taken instead of the innermost. The run failed it:
+the small face was refused as the big one's surface.
+
+No rows: all in the page, as §56.
+
+Not built: faces of other shapes, or of more than two families; a face's surface following
+its four corners exactly rather than its families' vanishing points.
+
+**977 passed, 0 failed.**

@@ -17,6 +17,11 @@ It runs on your own machine: a small Python server and a page in your browser.
 - **5-point perspective**, the curvilinear kind drawn with a compass. Lines
   marked as runs of points give the nearest consistent 5-point picture, the
   circle 90° out, and the move each line needs.
+- **Real corners**: double-click where lines of two families meet, as at the
+  corner of a box, and their ends are joined there. Drag the corner and they
+  move together. Lines that only cross in the picture are left alone.
+  Double-click inside four joined lines, as on a box's face, and the face
+  becomes a surface.
 - **Consensus**: the nearest consistent perspective, and the move each line
   needs to reach it.
 - **Checks against that perspective**: circles and ellipses (including the
@@ -30,9 +35,9 @@ It runs on your own machine: a small Python server and a page in your browser.
   it, and the file is not touched.
 - **Patterns on floors and walls**: Detect edges sorts a parquet or a tiled wall
   from the room's own lines, and uses it as a check on the horizon. A pattern
-  layer lays a repeat across its surface as a guide, and measures how far the
-  real pattern drifts from a true, even one. **Show flat** turns a surface to
-  face you.
+  layer lays a repeat across its surface as a guide, one of its own or a drawing
+  of yours from an SVG file, and measures how far the real pattern drifts from a
+  true, even one. **Show flat** turns a surface to face you.
 - **Arches**: Detect edges finds them, and names the wall each stands in when
   it can tell. Curves are kept out of the line families.
 - **Vaults**: Detect edges finds the point a vault runs to and sorts its ribs into
@@ -129,8 +134,9 @@ units as well as pixels.
 | layer | you mark | it gives |
 |---|---|---|
 | line family | drag each line, or click along it (three points or more, then `Enter`); in 5-point, click | a vanishing point, and, with three or more lines, how well they agree |
+| real corners | double-click where lines of two families meet; then inside four joined lines | their ends trimmed or extended to where they cross, and joined there; a face made a surface, spanned by its two families |
 | surface | two vanishing points, or "level with the ground" | the plane that an arc, ellipse, arch or pattern is read in; **Show flat** turns it to face you |
-| pattern | one repeat (a corner, then the next corner along each side), then corners further off | the repeat laid across the surface as grid, checker, brick or herringbone, and how far the marks drift from it |
+| pattern | one repeat (a corner, then the next corner along each side), then corners further off | the repeat laid across the surface as grid, checker, brick, herringbone or a drawing from an SVG file, and how far the marks drift from it |
 | arc | click round the rim | circle or oval, once the rim turns through 120° |
 | ellipse | drag across a circle, click round a drawn one, or click inside a cell | the ellipse a real circle would cast, how far a drawn one is from it, or the circle in a square |
 | arches and roofs | the springing line and the top, or click round a drawn one | the arch or roof a real one would cast; for a drawn arch: its rise, springing, crown offset and depth |
@@ -148,6 +154,8 @@ units as well as pixels.
 | zoom | pinch, or ⌘/ctrl + scroll |
 | fit the picture | `f`, or **Fit** |
 | end a run of points | `Enter`, or double-click |
+| join lines at a real corner | double-click where they meet, with no run of points begun |
+| make a face a surface | double-click inside four lines of two families joined at four corners |
 | remove the last mark | `Backspace` |
 | delete a placed point | ⌘-click |
 | cancel a pending mark | `Escape` |
@@ -263,6 +271,17 @@ A vault in a picture claimed as 5-point is refused, since its rays bend.
 
 A pattern's long planks are given by their length in widths, which you type. It
 is not measured.
+
+A drawing for a pattern is read from an SVG file. Its viewBox is one repeat, and
+its top left corner goes to the first mark. Only outlines are read: fills and
+colour are not, and text and images are left out with a note saying so.
+
+Real corners join line families only, not curves or a surface's lines. They are
+not drawn in the PDF. A line that **Tidy marks** swings off its corner is no
+longer joined there, and a line that runs on past the point is never joined.
+A face is four lines of two families joined at four corners. Its surface is
+drawn as any surface is, from one diagonal and the two vanishing points, so it
+can miss the other two corners by a little; the message says by how much.
 
 **Show flat** needs a measured lens, so a room that reads 1-point with nothing to
 measure one is refused.

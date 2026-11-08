@@ -10,6 +10,8 @@ steps, so a surface says which plane it is by being even on that one.
 """
 from __future__ import annotations
 
+import re
+import xml.etree.ElementTree as ET
 from math import ceil, floor
 
 import numpy as np
@@ -21,6 +23,8 @@ from .rectify import _apply
 MOTIFS = ("grid", "checker", "brick", "herringbone", "mirrored herringbone")
 MAX_TILES = 6000         # past this the repeat is too small for its surface
 SMALLEST_PX = 2.0        # a repeat this small on the page is grey, not a pattern
+MAX_ART = 20000          # points in one drawn repeat, its curves cut
+MAX_POINTS = 100000      # points of a drawn repeat over its whole surface
 
 
 def lattice(l, o, p, q):
@@ -166,11 +170,54 @@ def _clip(poly, edges):
     return poly
 
 
-def tiles(H, motif="grid", ratio=4.0, region=None, repeats=8):
+def _lay(art, H, lo, hi, edges):
+    """A drawn repeat over the box, each copy cut to `edges`: {"paths": ...}, in the picture."""
+    art = [np.asarray(p, float).reshape(-1, 2) for p in art]
+    pts = np.vstack(art)
+    a, b = pts.min(0), pts.max(0)               # a drawing may reach past its own repeat
+    I = np.arange(floor(lo[0] - b[0]), ceil(hi[0] - a[0]) + 1)
+    J = np.arange(floor(lo[1] - b[1]), ceil(hi[1] - a[1]) + 1)
+    if len(I) * len(J) > MAX_TILES:
+        return {"why": f"about {len(I) * len(J)} repeats would fit there; mark a larger repeat or a smaller surface"}
+    O = np.stack(np.meshgrid(I, J, indexing="ij"), -1).reshape(-1, 2).astype(float)
+    E = np.asarray(edges, float)
+    h = (np.array([a, [b[0], a[1]], b, [a[0], b[1]]]) + O[:, None]) @ E[:, :2].T + E[:, 2]
+    near = ~(h < 0).all(1).any(1)               # not wholly beyond one edge
+    O, h, out = O[near], h[near], {}
+    keep = MAX_POINTS // len(pts)
+    if len(O) > keep:                           # the nearest first: w is depth along the plane
+        i = np.argsort(np.c_[O + (a + b) / 2, np.ones(len(O))] @ H[2])[:keep]
+        out["note"] = (f"the nearest {keep} of {len(O)} repeats are drawn: a drawing of {len(pts)} "
+                       "points is too many lines for them all")
+        O, h = O[i], h[i]
+    whole = (h >= 0).all((1, 2))
+    W = O[whole]
+    pic = _apply(H, (pts + W[:, None]).reshape(-1, 2)).round(2).reshape(len(W), len(pts), 2)
+    paths, k = [], 0
+    for p in art:
+        paths += pic[:, k:k + len(p)].tolist()
+        k += len(p)
+    # the copies an edge runs through, cut segment by segment
+    A = np.vstack([p[:-1] for p in art]) + O[~whole][:, None]
+    B = np.vstack([p[1:] for p in art]) + O[~whole][:, None]
+    ha, hb = A @ E[:, :2].T + E[:, 2], B @ E[:, :2].T + E[:, 2]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t = ha / (ha - hb)
+    t0 = np.where((ha < 0) & (hb >= 0), t, 0.0).max(-1)
+    t1 = np.where((hb < 0) & (ha >= 0), t, 1.0).min(-1)
+    ok = ~((ha < 0) & (hb < 0)).any(-1) & (t0 < t1)
+    s = np.stack([A + t0[..., None] * (B - A), A + t1[..., None] * (B - A)], -2)[ok]
+    paths += _apply(H, s.reshape(-1, 2)).round(2).reshape(-1, 2, 2).tolist()
+    return {"polys": [], "shaded": [], "paths": paths, **out}
+
+
+def tiles(H, motif="grid", ratio=4.0, region=None, repeats=8, art=None):
     """The pattern on the picture: {"polys": ..., "shaded": ...}, or {"why": ...}.
 
     It stops where the repeat falls below a couple of pixels, and it covers
     `region` in the picture, or `repeats` each way from the repeat marked.
+    `art` is a drawn repeat from `svg_tile`, laid on the lattice in place of the
+    motif, and it comes back as open `paths`.
     """
     H = np.asarray(H, float)
     Hi = np.linalg.inv(H)
@@ -193,6 +240,8 @@ def tiles(H, motif="grid", ratio=4.0, region=None, repeats=8):
              for a, b in zip(r, np.roll(r, -1, axis=0))]
     k = float(ratio)
     lo, hi = r.min(0), r.max(0)
+    if art is not None:
+        return _lay(art, H, lo, hi, edges)
     w, h = hi - lo
     many = (k * w + h) ** 2 / (2 * k) if "herringbone" in motif else w * h * (2 if motif == "brick" else 1)
     if many > MAX_TILES:
@@ -204,6 +253,237 @@ def tiles(H, motif="grid", ratio=4.0, region=None, repeats=8):
             polys.append(_apply(H, q).round(2).tolist())
             shaded.append(s)
     return {"polys": polys, "shaded": shaded}
+
+
+# A drawn repeat, read from an SVG file. Only the outlines are read: fill,
+# stroke and colour are not, and every outline is drawn as a line.
+_NUM = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
+_CMD = re.compile(r"[\s,]*([MmZzLlHhVvCcSsQqTtAa])")
+_ARG = re.compile(r"[\s,]*(" + _NUM + ")")
+_FLAG = re.compile(r"[\s,]*([01])")          # an arc's flags may run together: "0110"
+_NARGS = dict(m=2, l=2, h=1, v=1, c=6, s=4, q=4, t=2, a=7)
+_UNITS = {"": 1.0, "px": 1.0, "pt": 4 / 3, "pc": 16.0, "mm": 96 / 25.4, "cm": 96 / 2.54, "in": 96.0}
+_UNDRAWN = {"defs", "symbol", "clipPath", "mask", "pattern", "marker", "metadata", "title", "desc",
+            "style", "script", "linearGradient", "radialGradient", "filter"}
+
+
+def _len(s, default=0.0):
+    m = re.fullmatch(r"\s*(" + _NUM + r")\s*([a-z]*)\s*", s or "")
+    return float(m.group(1)) * _UNITS[m.group(2)] if m and m.group(2) in _UNITS else default
+
+
+def _transform(s):
+    """An SVG transform list as a 3 x 3 matrix."""
+    M = np.eye(3)
+    for name, args in re.findall(r"(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)", s or ""):
+        v = [float(x) for x in re.findall(_NUM, args)]
+        a = v + [0.0] * (6 - len(v))
+        c, s_ = np.cos(np.radians(a[0])), np.sin(np.radians(a[0]))
+        T = {"matrix": [[a[0], a[2], a[4]], [a[1], a[3], a[5]]],
+             "translate": [[1, 0, a[0]], [0, 1, a[1]]],
+             "scale": [[a[0], 0, 0], [0, a[1] if len(v) > 1 else a[0], 0]],
+             "rotate": [[c, -s_, a[1] - c * a[1] + s_ * a[2]], [s_, c, a[2] - s_ * a[1] - c * a[2]]],
+             "skewX": [[1, np.tan(np.radians(a[0])), 0], [0, 1, 0]],
+             "skewY": [[1, 0, 0], [np.tan(np.radians(a[0])), 1, 0]]}[name]
+        M = M @ np.vstack([T, [0, 0, 1]])
+    return M
+
+
+def _bez(P, step):
+    """A Bezier curve, control points as rows, cut into pieces about `step` long; its start left off."""
+    P = np.asarray(P, float)
+    n = int(min(64, max(2, ceil(np.hypot(*np.diff(P, axis=0).T).sum() / step))))
+    t = np.linspace(0, 1, n + 1)[1:, None]
+    if len(P) == 3:
+        return (1 - t) ** 2 * P[0] + 2 * (1 - t) * t * P[1] + t ** 2 * P[2]
+    return (1 - t) ** 3 * P[0] + 3 * (1 - t) ** 2 * t * P[1] + 3 * (1 - t) * t ** 2 * P[2] + t ** 3 * P[3]
+
+
+def _arc(p0, rx, ry, phi, large, sweep, p1, step):
+    """An SVG elliptical arc, cut into pieces about `step` long; its start left off (SVG 1.1, F.6.5)."""
+    rx, ry = abs(rx), abs(ry)
+    if np.allclose(p0, p1):
+        return np.empty((0, 2))
+    if rx == 0 or ry == 0:
+        return p1[None]
+    c, s = np.cos(np.radians(phi)), np.sin(np.radians(phi))
+    R = np.array([[c, -s], [s, c]])
+    x1, y1 = R.T @ ((p0 - p1) / 2)
+    lam = (x1 / rx) ** 2 + (y1 / ry) ** 2
+    if lam > 1:                                 # too small to reach: grown until it just does
+        rx, ry = rx * np.sqrt(lam), ry * np.sqrt(lam)
+    k = np.sqrt(max(0.0, (rx * ry) ** 2 - (rx * y1) ** 2 - (ry * x1) ** 2) / ((rx * y1) ** 2 + (ry * x1) ** 2))
+    k = -k if large == sweep else k
+    cx, cy = k * rx * y1 / ry, -k * ry * x1 / rx
+    a0 = np.arctan2((y1 - cy) / ry, (x1 - cx) / rx)
+    da = (np.arctan2((-y1 - cy) / ry, (-x1 - cx) / rx) - a0) % (2 * np.pi)
+    if not sweep and da > 0:
+        da -= 2 * np.pi
+    n = int(min(64, max(2, ceil(abs(da) * max(rx, ry) / step))))
+    a = a0 + da * np.linspace(0, 1, n + 1)[1:]
+    out = (R @ np.c_[rx * np.cos(a), ry * np.sin(a)].T).T + R @ (cx, cy) + (p0 + p1) / 2
+    out[-1] = p1
+    return out
+
+
+def _path(d, step):
+    """SVG path data as polylines, one a subpath, its curves cut into pieces about `step` long."""
+    runs, run = [], []
+    pos, cmd, prev = 0, None, None
+    cur = start = ctrl = np.zeros(2)
+    while True:
+        m = _CMD.match(d, pos)
+        if m:
+            cmd, pos = m.group(1), m.end()
+        elif cmd is None or cmd in "Zz":
+            break
+        c = cmd.lower()
+        if c == "z":
+            if len(run) > 1:
+                runs.append(run + [start])
+            run, cur, prev = [start], start, c
+            continue
+        args = []
+        for i in range(_NARGS[c]):
+            m = (_FLAG if c == "a" and i in (3, 4) else _ARG).match(d, pos)
+            if not m:
+                break
+            args.append(float(m.group(1)))
+            pos = m.end()
+        if len(args) < _NARGS[c]:
+            break                               # the end, or what cannot be read: drawn up to it
+        a = np.array(args)
+        o = cur if cmd.islower() else np.zeros(2)
+        if c == "m":
+            if len(run) > 1:
+                runs.append(run)
+            cur = start = o + a
+            run, prev = [cur], c
+            cmd = "l" if cmd == "m" else "L"    # pairs after a move are lines
+            continue
+        if c == "l":
+            pts = [o + a]
+        elif c == "h":
+            pts = [np.array([a[0] + o[0], cur[1]])]
+        elif c == "v":
+            pts = [np.array([cur[0], a[0] + o[1]])]
+        elif c in "cs":
+            c1 = o + a[:2] if c == "c" else (2 * cur - ctrl if prev in ("c", "s") else cur)
+            ctrl = o + a[-4:-2]
+            pts = _bez([cur, c1, ctrl, o + a[-2:]], step)
+        elif c in "qt":
+            ctrl = o + a[:2] if c == "q" else (2 * cur - ctrl if prev in ("q", "t") else cur)
+            pts = _bez([cur, ctrl, o + a[-2:]], step)
+        else:
+            pts = _arc(cur, *a[:5], o + a[5:], step)
+        if len(pts):
+            run += list(pts)
+            cur = np.asarray(pts[-1], float)
+        prev = c
+    if len(run) > 1:
+        runs.append(run)
+    return [np.array(r, float) for r in runs]
+
+
+def _shape(e, tag):
+    """An SVG element's outline as path data, or None."""
+    g = lambda k: _len(e.get(k))
+    if tag == "path":
+        return e.get("d")
+    if tag == "line":
+        return f"M{g('x1')},{g('y1')}L{g('x2')},{g('y2')}"
+    if tag in ("polyline", "polygon"):
+        return "M" + (e.get("points") or "") + ("z" if tag == "polygon" else "")
+    if tag == "rect":
+        x, y, w, h = g("x"), g("y"), g("width"), g("height")
+        rx, ry = e.get("rx"), e.get("ry")
+        rx, ry = min(abs(_len(rx or ry)), w / 2), min(abs(_len(ry or rx)), h / 2)
+        if w <= 0 or h <= 0:
+            return None
+        if not (rx and ry):
+            return f"M{x},{y}h{w}v{h}h{-w}z"
+        return (f"M{x + rx},{y}h{w - 2 * rx}a{rx},{ry} 0 0 1 {rx},{ry}v{h - 2 * ry}a{rx},{ry} 0 0 1 {-rx},{ry}"
+                f"h{2 * rx - w}a{rx},{ry} 0 0 1 {-rx},{-ry}v{2 * ry - h}a{rx},{ry} 0 0 1 {rx},{-ry}z")
+    if tag in ("circle", "ellipse"):
+        rx, ry = (g("r"), g("r")) if tag == "circle" else (g("rx"), g("ry"))
+        if rx <= 0 or ry <= 0:
+            return None
+        return f"M{g('cx') - rx},{g('cy')}a{rx},{ry} 0 1 0 {2 * rx},0a{rx},{ry} 0 1 0 {-2 * rx},0z"
+    return None
+
+
+def svg_tile(text):
+    """A drawn repeat from an SVG file: its outlines as paths, its viewBox the unit square.
+
+    The drawing's top left goes on the repeat's first mark, its top edge runs
+    to the second and its left edge to the third. Without a viewBox its width
+    and height are the repeat, and without those its own extent. What is drawn
+    past the repeat is kept, so a motif may overlap its neighbours as drawn.
+    Raises ValueError for a file it cannot use.
+    """
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as exc:
+        raise ValueError(f"that is not an SVG file this can read: {exc}") from None
+    tag = lambda e: e.tag.rsplit("}", 1)[-1] if isinstance(e.tag, str) else ""
+    if tag(root) != "svg":
+        raise ValueError("that file has no <svg> at its root")
+    ids = {e.get("id"): e for e in root.iter() if e.get("id")}
+    vb = [float(x) for x in re.findall(_NUM, root.get("viewBox") or "")]
+    w, h = _len(root.get("width"), None), _len(root.get("height"), None)
+    cell, said = ((vb, "its viewBox") if len(vb) == 4 and vb[2] > 0 and vb[3] > 0 else
+                  ([0.0, 0.0, w, h], "its width and height") if w and h and w > 0 and h > 0 else
+                  (None, "the drawing's own extent"))
+
+    def read(step):
+        runs, skipped, shapes = [], set(), [0]
+
+        def walk(e, M, depth):
+            t = tag(e)
+            st = (e.get("style") or "").replace(" ", "")
+            if (t in _UNDRAWN or depth > 20 or e.get("display") == "none" or e.get("visibility") == "hidden"
+                    or "display:none" in st or "visibility:hidden" in st):
+                return
+            M = M @ _transform(e.get("transform"))
+            if t == "use":
+                ref = ids.get((e.get("href") or e.get("{http://www.w3.org/1999/xlink}href") or "").lstrip("#"))
+                if ref is not None:
+                    M = M @ np.array([[1, 0, _len(e.get("x"))], [0, 1, _len(e.get("y"))], [0, 0, 1.0]])
+                    for k in (list(ref) if tag(ref) == "symbol" else [ref]):
+                        walk(k, M, depth + 1)
+                return
+            d = _shape(e, t)
+            if d:
+                got = [r @ M[:2, :2].T + M[:2, 2]
+                       for r in _path(d, step / (np.sqrt(abs(np.linalg.det(M[:2, :2]))) or 1.0))]
+                runs.extend(got)
+                shapes[0] += bool(got)
+                if sum(map(len, runs)) > MAX_ART:
+                    raise ValueError(f"that drawing is over {MAX_ART} points once its curves are cut: "
+                                     "a repeat that fine is grey on the page")
+            elif t in ("text", "image", "foreignObject"):
+                skipped.add(t)
+            for k in e:
+                walk(k, M, depth)
+        try:
+            walk(root, np.eye(3), 0)
+        except RecursionError:
+            raise ValueError("that drawing is nested too deep to read") from None
+        return runs, sorted(skipped), shapes[0]
+
+    runs, skipped, shapes = read(max(cell[2:]) / 32 if cell else 1.0)
+    if not runs:
+        raise ValueError("there is nothing in that drawing to repeat: no paths or shapes"
+                         + (f" ({' and '.join(skipped)} {'is' if len(skipped) == 1 else 'are'} not read)" if skipped else ""))
+    if cell is None:
+        lo, hi = (lambda p: (p.min(0), p.max(0)))(np.vstack(runs))
+        if (hi - lo).min() <= 0:
+            raise ValueError("with no viewBox the drawing's own extent is the repeat, and it is flat")
+        cell = [*lo, *(hi - lo)]
+        runs, skipped, shapes = read(max(cell[2:]) / 32)
+    x0, y0, w, h = cell
+    return {"paths": [np.round((r - (x0, y0)) / (w, h), 5).tolist() for r in runs],
+            "shapes": shapes, "points": int(sum(map(len, runs))), "skipped": skipped, "repeat": said}
 
 
 def _flat(pts, l, c):

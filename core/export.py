@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt                                  # noqa: E402
 import numpy as np                                               # noqa: E402
+from matplotlib.collections import LineCollection                # noqa: E402
 from matplotlib.lines import Line2D                              # noqa: E402
 from matplotlib.patches import Polygon, PathPatch              # noqa: E402
 from matplotlib.path import Path                                 # noqa: E402
@@ -163,6 +164,8 @@ def pdf(doc, image=None):
             for q, shade in zip(L.get("polys") or [], L.get("shaded") or []):
                 ax.add_patch(Polygon(q, closed=True, fill=shade, ec=c, fc=c,
                                      alpha=0.35 if shade else 1.0, lw=lw * 0.5))
+            if L.get("paths"):                  # a drawn repeat's open lines
+                ax.add_collection(LineCollection(L["paths"], colors=c, linewidths=lw * 0.5))
             if L.get("pts"):
                 p = np.asarray(L["pts"], float)
                 ax.plot(p[:, 0], p[:, 1], ls="none", marker="o", ms=LW_PT * 2.4, color=c)
